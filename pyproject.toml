@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "usb-rea"
+version = "0.0.1"
+description = "Reverse Engineer any USB gadget: capture, diff, infer, and generate open drivers with evidence"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+dependencies = ["pyusb>=1.2"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+usb-rea = "usb_rea.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/usb_rea"]
