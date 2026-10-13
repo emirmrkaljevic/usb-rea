@@ -63,7 +63,7 @@ class Command:
         b = bytearray(self.template())
         for f in self.fields:
             if f.kind == "value":
-                b[f.offset] = int(round((value or 0) * f.scale + f.bias)) & 0xFF
+                b[f.offset] = int(round((value or 0) * f.scale + f.bias + 1e-9)) & 0xFF
         for f in self.fields:
             if f.kind == "checksum":
                 b[f.offset] = CHECKSUMS[f.algo](b[f.covers[0]:f.covers[1]])
@@ -96,7 +96,7 @@ def _fit_linear(xs, ys):
     for tol in (0, 1):
         for cand_a in (round(a), round(a, 1), round(a, 2), round(a, 3), round(a, 4)):
             for cand_b in (round(b), round(b, 2), b):
-                if all(abs(round(x * cand_a + cand_b) - y) <= tol for x, y in zip(xs, ys)):
+                if all(abs(round(x * cand_a + cand_b + 1e-9) - y) <= tol for x, y in zip(xs, ys)):
                     return cand_a, cand_b
     # floor-style encodings (e.g. value // 2)
     if all(abs((x * a + b) - y) <= 1 for x, y in zip(xs, ys)):
