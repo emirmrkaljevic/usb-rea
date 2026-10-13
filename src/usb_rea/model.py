@@ -50,6 +50,10 @@ class Action:
     def value(self) -> float | None:
         return split_label(self.label)[1]
 
+    @property
+    def values(self) -> list[float]:
+        return split_values(self.label)[1]
+
 
 def split_label(label: str) -> tuple[str, float | None]:
     """'brightness 50%' -> ('brightness', 50.0); 'power on' -> ('power', 1.0); 'reset' -> ('reset', None)."""
@@ -62,3 +66,22 @@ def split_label(label: str) -> tuple[str, float | None]:
     if len(words) >= 2 and words[-1] in ("on", "off", "true", "false", "yes", "no"):
         return " ".join(words[:-1]), 1.0 if words[-1] in ("on", "true", "yes") else 0.0
     return label.lower(), None
+
+
+def split_values(label: str) -> tuple[str, list[float]]:
+    """'color 255, 24, 0' -> ('color', [255, 24, 0]); falls back to split_label for one/zero values."""
+    import re
+    toks = [t for t in re.split(r"[\s,=:;/]+", label.strip()) if t]
+    name, nums = [], []
+    for t in toks:
+        m = re.fullmatch(r"(-?\d+(?:\.\d+)?)%?", t)
+        if m and name:
+            nums.append(float(m.group(1)))
+        elif nums:
+            break
+        else:
+            name.append(t)
+    if len(nums) >= 2 and len(name) + len(nums) == len(toks):
+        return " ".join(name).lower(), nums
+    n, v = split_label(label)
+    return n, [] if v is None else [v]
