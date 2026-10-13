@@ -8,3 +8,4 @@ build/
 *.pcap
 *.pcapng
 !tests/data/**
+drafts/
