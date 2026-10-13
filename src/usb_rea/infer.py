@@ -93,10 +93,11 @@ def _fit_linear(xs, ys):
     a = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / sxx
     b = my - a * mx
     # snap to "nice" numbers if they still fit
-    for cand_a in (round(a), round(a, 1), round(a, 2), round(a, 3), round(a, 4)):
-        for cand_b in (round(b), round(b, 2), b):
-            if all(abs(round(x * cand_a + cand_b) - y) <= 1 for x, y in zip(xs, ys)):
-                return cand_a, cand_b
+    for tol in (0, 1):
+        for cand_a in (round(a), round(a, 1), round(a, 2), round(a, 3), round(a, 4)):
+            for cand_b in (round(b), round(b, 2), b):
+                if all(abs(round(x * cand_a + cand_b) - y) <= tol for x, y in zip(xs, ys)):
+                    return cand_a, cand_b
     # floor-style encodings (e.g. value // 2)
     if all(abs((x * a + b) - y) <= 1 for x, y in zip(xs, ys)):
         return a, b
