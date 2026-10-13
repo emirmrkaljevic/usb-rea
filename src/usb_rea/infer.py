@@ -109,6 +109,19 @@ class Protocol:
 
 
 def _fit_linear(xs, ys):
+    """Linear fit that must also survive leave-one-out (guards against rounding coincidences)."""
+    fit = _fit_linear_raw(xs, ys)
+    if fit is None or len(xs) < 3:
+        return fit
+    for i in range(len(xs)):
+        sub = _fit_linear_raw(xs[:i] + xs[i + 1:], ys[:i] + ys[i + 1:])
+        tol = 1 if len(xs) >= 5 else 0
+        if sub is None or abs(round(xs[i] * sub[0] + sub[1] + 1e-9) - ys[i]) > tol:
+            return None
+    return fit
+
+
+def _fit_linear_raw(xs, ys):
     n = len(xs)
     if n < 2 or len(set(xs)) < 2 or len(set(ys)) < 2:
         return None
@@ -116,7 +129,8 @@ def _fit_linear(xs, ys):
     sxx = sum((x - mx) ** 2 for x in xs)
     a = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / sxx
     b = my - a * mx
-    for tol in (0, 1):
+    # off-by-one tolerance (vendor rounding) only with enough samples; otherwise a lookup table is the honest answer
+    for tol in (0, 1) if n >= 5 else (0,):
         for ca in (round(a), round(a, 1), round(a, 2), round(a, 3), round(a, 4)):
             for cb in (round(b), round(b, 2), b):
                 if all(abs(round(x * ca + cb + 1e-9) - y) <= tol for x, y in zip(xs, ys)):

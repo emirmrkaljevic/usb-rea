@@ -137,3 +137,36 @@ def make_capture(path, actions: list[str] | None = None, transport: str = "bulk"
     mpath = path.with_suffix(path.suffix + ".actions.json")
     mpath.write_text(json.dumps(marks, indent=1))
     return path, mpath
+
+
+def capture_from_messages(path, messages, vid: int, pid: int, noise: bool = True, seed: int = 0):
+    """Write a usbmon capture from explicit host->device messages.
+
+    messages: list of (label, data, how) where how is ("bulk"|"interrupt", endpoint) or
+    ("control", 8-byte setup). Used to replay protocols documented by other projects.
+    """
+    rnd = random.Random(seed)
+    w = UsbmonWriter()
+    t = 1_760_000_000.0
+    desc = bytearray(device_descriptor())
+    desc[8:12] = struct.pack("<HH", vid, pid)
+    w.control_in(t, bytes([0x80, 6, 0, 1, 0, 0, 18, 0]), bytes(desc))
+    t += 0.5
+    marks = []
+    for label, data, how in messages:
+        start = t
+        if noise:
+            for _ in range(rnd.randint(0, 2)):
+                w.in_(t + rnd.random() * 0.2, 0x81, bytes(8))
+        if how[0] == "control":
+            w.control_out(t + 0.3, how[1], data)
+        else:
+            w.out(t + 0.3, how[1], data, xtype=1 if how[0] == "interrupt" else 3)
+        t += 1.0
+        marks.append({"label": label, "start": start, "end": t - 0.01})
+        t += 0.5
+    path = Path(path)
+    w.save(path)
+    mpath = path.with_suffix(path.suffix + ".actions.json")
+    mpath.write_text(json.dumps(marks, indent=1))
+    return path, mpath
