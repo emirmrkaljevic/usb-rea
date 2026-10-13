@@ -1,20 +1,35 @@
 # usb-rea — Reverse Engineer any USB gadget
 
+[![ci](https://github.com/emirmrkaljevic/usb-rea/actions/workflows/ci.yml/badge.svg)](https://github.com/emirmrkaljevic/usb-rea/actions/workflows/ci.yml) ![license](https://img.shields.io/badge/license-MIT-blue)
+
+![usb-rea demo: capture labelled clicks, get the protocol and a working driver](docs/demo.gif)
+
 Got a USB device that only ships a Windows vendor app (case LCD, RGB controller, mouse, "smart" lamp)? Click around in the vendor app while **usb-rea** captures the USB traffic (usbmon on Linux, USBPcap on Windows), diffs the packets per action, infers the protocol, and writes an open-source Python/libusb driver — with every conclusion linked to the exact packets that prove it.
 
-> Status: alpha. The full pipeline works end-to-end on synthetic captures; real-device validation in progress.
+> Status: alpha (v0.1.0). Validated on synthetic devices, on protocols documented by liquidctl and rivalcfg, and on public Wireshark captures — see [docs/VALIDATION.md](docs/VALIDATION.md). Not yet tested on a physical gadget: your captures are welcome.
 
 ## Try it in 10 seconds (no hardware needed)
 ```bash
 pip install git+https://github.com/emirmrkaljevic/usb-rea
-usb-rea demo
+usb-rea demo --device fan
 ```
 ```
-brightness   100%  0xaa 0x01 round(value * 2.55 + 0) 0x00 sum8(bytes[0:4])
-power         60%  0xaa 0x02 round(value * 1 + 0) 0x00 sum8(bytes[0:4])
-hue          100%  0xaa 0x03 round(value * 0.5 + 0) 0x00 sum8(bytes[0:4])
+fan    100%  0x5a | counter (+1 per message) | 0x10 | u16be round(value * 1 + 0) | 0x00 | u16le crc16_modbus(bytes[0:6])
+color  100%  0x5a | counter (+1 per message) | 0x20 | round(value * 1 + 0) | round(value[1] * 1 + 0) | round(value[2] * 1 + 0) | u16le crc16_modbus(bytes[0:6])
+mode   100%  0x5a | counter (+1 per message) | 0x30 | lookup 1→0x11, 2→0x22, 3→0x47 | 0x00 | 0x00 | u16le crc16_modbus(bytes[0:6])
 ```
-It writes a fake lamp capture, recovers the protocol (constant header, command byte, value scaling, sum8 checksum), and writes `report.md` (every claim linked to Wireshark frame numbers) and a working pyusb driver.
+It writes a synthetic capture of a fan controller, recovers the protocol, and writes `report.md` (every claim linked to Wireshark frame numbers) and a working pyusb driver that encodes values it never saw.
+
+## What it can infer
+| Role | Example |
+|---|---|
+| constant header / command id | `5a`, `10` vs `20` vs `30` |
+| linear values, 8- or 16-bit LE/BE, several per action | `fan 2650` → `0a 5a`; `color 255 24 0` |
+| lookup tables (non-linear choices) | DPI 250→`08`, 500→`07` … |
+| rolling counters | sequence byte +1 per message |
+| checksums | sum8, xor8, neg/inv sum8, sum16, CRC8, CRC8/MAXIM, CRC16 CCITT-FALSE/XMODEM/MODBUS/KERMIT |
+
+Linear fits must survive leave-one-out cross-checks; otherwise usb-rea falls back to an honest lookup table and says so.
 
 ## Real device workflow (Linux)
 ```bash
@@ -43,14 +58,16 @@ Captured on Windows with USBPcap/Wireshark? Pass the `.pcapng` directly; markers
 ## Roadmap
 - [x] pcap/pcapng parser (usbmon + USBPcap)
 - [x] action markers and per-action diffing
-- [x] checksum detection (sum8, xor8, neg/inv sum8)
+- [x] checksum detection (sum8, xor8, neg/inv sum8, CRC8, CRC16 variants)
 - [x] evidence-backed protocol report
 - [x] driver scaffolding (pyusb, bulk/interrupt + control/HID SET_REPORT)
 - [x] confirmed replay
 - [x] MCP server
-- [ ] rolling counters, CRC8/CRC16, multi-byte (16-bit LE/BE) values
-- [ ] emulated-device CI (dummy_hcd + raw-gadget)
-- [ ] validation against documented protocols (liquidctl, rivalcfg, HID++)
+- [x] rolling counters, multi-byte (16-bit LE/BE) values, lookup tables, multi-value actions
+- [x] validation against documented protocols (liquidctl, rivalcfg)
+- [ ] emulated-device CI (dummy_hcd + configfs HID; script in `scripts/gadget_e2e.sh`)
+- [ ] real-hardware case studies
+- [ ] state machines / multi-packet transactions, 32-bit values, bitfields
 - [ ] HID report descriptor decoding
 
 ## Legal
