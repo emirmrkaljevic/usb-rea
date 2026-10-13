@@ -36,6 +36,7 @@ def main(argv=None) -> int:
 
     d = sub.add_parser("demo", help="generate a synthetic capture and run the whole pipeline")
     d.add_argument("-o", "--outdir", default="usb-rea-demo")
+    d.add_argument("--device", choices=["lamp", "fan"], default="lamp")
 
     r = sub.add_parser("replay", help="send one packet to a real device (requires --yes)")
     r.add_argument("vid", type=_int)
@@ -76,7 +77,7 @@ def main(argv=None) -> int:
         run()
         return 0
     if a.cmd == "demo":
-        return _demo(Path(a.outdir))
+        return _demo(Path(a.outdir), a.device)
     if a.cmd == "transfers":
         from .pcap import read_transfers
         for t in read_transfers(a.capture):
@@ -102,19 +103,22 @@ def main(argv=None) -> int:
     return 0
 
 
-def _demo(outdir: Path) -> int:
+def _demo(outdir: Path, device: str = "lamp") -> int:
     from .synth import make_capture
     from .pipeline import analyze, sha256
     from .report import render
     from .scaffold import generate
     outdir.mkdir(parents=True, exist_ok=True)
-    cap, _ = make_capture(outdir / "lamp.pcap")
+    cap, _ = make_capture(outdir / f"{device}.pcap", device=device)
     proto = analyze(cap)
     (outdir / "report.md").write_text(render(proto, str(cap), sha256(cap)))
-    (outdir / "lamp_driver.py").write_text(generate(proto))
+    (outdir / f"{device}_driver.py").write_text(generate(proto))
+    (outdir / "__init__.py").touch()
+    print(f"captured {sum(len(c.samples) for c in proto.commands)} labelled actions, "
+          f"device {proto.vid:04x}:{proto.pid:04x}\n")
     for c in proto.commands:
-        print(f"{c.name:12s} {c.confidence:4.0%}  " + " ".join(f.describe() for f in c.fields))
-    print(f"\nwrote {outdir}/report.md and {outdir}/lamp_driver.py")
+        print(f"{c.name:12s} {c.confidence:4.0%}  " + " | ".join(f.describe() for f in c.fields))
+    print(f"\nwrote {outdir}/report.md and {outdir}/{device}_driver.py")
     return 0
 
 
