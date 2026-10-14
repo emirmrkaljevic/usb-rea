@@ -53,7 +53,18 @@ Captured on Windows with USBPcap/Wireshark? Pass the `.pcapng` directly; markers
 4. `usb-rea infer` — message templates + evidence report
 5. `usb-rea scaffold` — generate a pyusb driver and replay tests
 6. `usb-rea replay` — send packets to the device (only with explicit confirmation)
-7. `usb-rea mcp` — the same tools as an MCP server for AI agents
+7. `usb-rea hid` — decode a HID report descriptor from a capture (GET_DESCRIPTOR 0x22) or from hex, and decode report payloads
+8. `usb-rea mcp` — the same tools as an MCP server for AI agents
+
+### HID devices
+Most RGB keyboards, mice, headsets and LCD gadgets are HID with a vendor-defined page. If the capture includes the
+report descriptor (start capturing, then replug the device), the report gets a section with every report's ID, size and
+fields, and each inferred command is tagged with the HID report it travels in. Without a capture:
+
+```sh
+usb-rea hid /sys/class/hidraw/hidraw0/device/report_descriptor --items
+usb-rea hid capture.pcapng --decode "10ff0d1d000000" --type Output
+```
 
 ## Roadmap
 - [x] pcap/pcapng parser (usbmon + USBPcap)
@@ -65,10 +76,10 @@ Captured on Windows with USBPcap/Wireshark? Pass the `.pcapng` directly; markers
 - [x] MCP server
 - [x] rolling counters, multi-byte (16-bit LE/BE) values, lookup tables, multi-value actions
 - [x] validation against documented protocols (liquidctl, rivalcfg)
+- [x] HID report descriptor decoding (`usb-rea hid`), with captured commands mapped to their HID reports
 - [ ] emulated-device CI (dummy_hcd + configfs HID; script in `scripts/gadget_e2e.sh`)
 - [ ] real-hardware case studies
 - [ ] state machines / multi-packet transactions, 32-bit values, bitfields
-- [ ] HID report descriptor decoding
 
 ## Legal
 Reverse engineering for interoperability is permitted (EU Directive 2009/24/EC Art. 6, US DMCA §1201(f)). usb-rea only analyzes traffic of devices you own and never redistributes vendor code.

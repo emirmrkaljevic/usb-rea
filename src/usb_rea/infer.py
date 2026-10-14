@@ -100,6 +100,7 @@ class Protocol:
     pid: int | None
     commands: list[Command]
     unmatched: list[str] = field(default_factory=list)
+    hid: list[dict] = field(default_factory=list)   # filled by pipeline when the capture has HID descriptors
 
     def to_dict(self):
         d = asdict(self)

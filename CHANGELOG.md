@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+- HID report descriptor decoder (`usb-rea hid`, MCP tool `hid_descriptor`): items, reports, bit-exact fields,
+  report IDs, Push/Pop, extended usages, payload decoding; checked against the HID 1.11 boot mouse/keyboard descriptors
+- reports include a HID section and tag each inferred command with its HID report when the capture has GET_DESCRIPTOR 0x22
+- Dockerfile and glama.json so the MCP server can be listed on Glama
+
 ## v0.1.0 — 2026-10-14
 First public release.
 

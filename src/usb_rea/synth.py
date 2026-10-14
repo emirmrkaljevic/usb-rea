@@ -75,6 +75,14 @@ def device_descriptor() -> bytes:
     return struct.pack("<BBHBBBBHHHBBBB", 18, 1, 0x0200, 0, 0, 0, 64, VID, PID, 0x0100, 1, 2, 0, 1)
 
 
+# Vendor-defined HID interface for the lamp when it talks over SET_REPORT:
+# 5-byte output report (the command) and 3-byte input report (the ACK), no report IDs.
+LAMP_HID_DESCRIPTOR = bytes.fromhex(
+    "06 00 ff 09 01 a1 01 15 00 26 ff 00 75 08"
+    " 95 05 09 02 91 02"
+    " 95 03 09 03 81 02 c0")
+
+
 FAN_MODES = {1: 0x11, 2: 0x22, 3: 0x47}
 FAN_ACTIONS = ["fan 800", "fan 1200", "fan 2650", "fan 4000", "color 255 0 0", "color 0 128 255",
                "color 10 20 30", "mode 1", "mode 2", "mode 3"]
@@ -109,6 +117,8 @@ def make_capture(path, actions: list[str] | None = None, transport: str = "bulk"
     w = UsbmonWriter()
     t = 1_760_000_000.0
     w.control_in(t, bytes([0x80, 6, 0, 1, 0, 0, 18, 0]), device_descriptor())
+    if transport == "control":
+        w.control_in(t + 0.01, bytes([0x81, 6, 0, 0x22, 0, 0, len(LAMP_HID_DESCRIPTOR), 0]), LAMP_HID_DESCRIPTOR)
     t += 0.5
     marks = []
     seq = 0x40

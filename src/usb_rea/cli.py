@@ -34,6 +34,12 @@ def main(argv=None) -> int:
         s.add_argument("-d", "--device", type=int)
         s.add_argument("-o", "--out")
 
+    h = sub.add_parser("hid", help="decode a HID report descriptor (from a capture or hex)")
+    h.add_argument("source", help="capture file, or descriptor hex (e.g. from /sys/class/hidraw/*/device/report_descriptor)")
+    h.add_argument("--decode", metavar="HEX", help="also decode one report payload")
+    h.add_argument("--type", default="Input", choices=["Input", "Output", "Feature"], help="report type for --decode")
+    h.add_argument("--items", action="store_true", help="print every descriptor item")
+
     d = sub.add_parser("demo", help="generate a synthetic capture and run the whole pipeline")
     d.add_argument("-o", "--outdir", default="usb-rea-demo")
     d.add_argument("--device", choices=["lamp", "fan"], default="lamp")
@@ -76,6 +82,8 @@ def main(argv=None) -> int:
         from .mcp_server import run
         run()
         return 0
+    if a.cmd == "hid":
+        return _hid(a)
     if a.cmd == "demo":
         return _demo(Path(a.outdir), a.device)
     if a.cmd == "transfers":
@@ -100,6 +108,38 @@ def main(argv=None) -> int:
         print(f"wrote {a.out}")
     else:
         print(text)
+    return 0
+
+
+def _hid(a) -> int:
+    from . import hid
+    src = Path(a.source)
+    if src.exists() and src.suffix in (".pcap", ".pcapng", ".cap"):
+        from .pcap import read_transfers
+        found = hid.from_transfers(read_transfers(src))
+        if not found:
+            print("no HID report descriptor (GET_DESCRIPTOR 0x22) in this capture; "
+                  "replug the device while capturing, or pass the descriptor hex", file=sys.stderr)
+            return 1
+        descs = [(f"device {d}, interface {i}", raw) for (d, i), raw in sorted(found.items())]
+    elif src.exists():
+        raw = src.read_bytes()
+        descs = [(str(src), raw)]
+    else:
+        descs = [("hex", bytes.fromhex(a.source.replace("0x", "").replace(",", " ")))]
+    for name, raw in descs:
+        desc = hid.parse(raw)
+        print(f"# {name}: {len(raw)} bytes, top level {', '.join(desc.top_usages) or '?'}")
+        if a.items:
+            print(hid.dump(desc))
+        for r in desc.reports:
+            print(f"\n{r.title()}")
+            for f in r.fields:
+                print(f"  {f.describe()}")
+        if a.decode:
+            print(f"\n{a.type} {a.decode}:")
+            for label, v in hid.decode(desc, a.type, bytes.fromhex(a.decode)):
+                print(f"  {label} = {v}")
     return 0
 
 

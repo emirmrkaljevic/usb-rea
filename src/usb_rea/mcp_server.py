@@ -48,6 +48,26 @@ def build():
         return generate(analyze(capture, markers, device))
 
     @app.tool()
+    def hid_descriptor(source: str, decode_hex: str | None = None, report_type: str = "Input") -> str:
+        """Decode a HID report descriptor: `source` is a capture path (finds GET_DESCRIPTOR 0x22) or descriptor hex.
+        Optionally decode one report payload (`decode_hex`) of `report_type` Input/Output/Feature."""
+        from pathlib import Path
+        from . import hid
+        from .pcap import read_transfers
+        if Path(source).exists():
+            found = hid.from_transfers(read_transfers(source))
+            raws = {f"{d}:{i}": r for (d, i), r in found.items()}
+        else:
+            raws = {"hex": bytes.fromhex(source.replace("0x", "").replace(",", " "))}
+        out = {}
+        for k, raw in raws.items():
+            desc = hid.parse(raw)
+            out[k] = desc.to_dict()
+            if decode_hex:
+                out[k]["decoded"] = hid.decode(desc, report_type, bytes.fromhex(decode_hex))
+        return json.dumps(out or {"error": "no HID report descriptor in capture"})
+
+    @app.tool()
     def replay_packet(vid: int, pid: int, endpoint: int, hex_data: str, user_confirmed: bool = False,
                       setup_hex: str | None = None) -> str:
         """Send one packet to real hardware. Only set user_confirmed=True after the human approved this exact packet."""
