@@ -1,5 +1,7 @@
 # usb-rea — Reverse Engineer any USB gadget
 
+<!-- mcp-name: io.github.emirmrkaljevic/usb-rea -->
+
 [![ci](https://github.com/emirmrkaljevic/usb-rea/actions/workflows/ci.yml/badge.svg)](https://github.com/emirmrkaljevic/usb-rea/actions/workflows/ci.yml) ![license](https://img.shields.io/badge/license-MIT-blue)
 
 ![usb-rea demo: capture labelled clicks, get the protocol and a working driver](docs/demo.gif)
@@ -20,11 +22,18 @@ mode   100%  0x5a | counter (+1 per message) | 0x30 | lookup 1→0x11, 2→0x22,
 ```
 It writes a synthetic capture of a fan controller, recovers the protocol, and writes `report.md` (every claim linked to Wireshark frame numbers) and a working pyusb driver that encodes values it never saw.
 
+`--device lamp` (default) is a simple 8-bit device; `--device dial` shows 32-bit values and packed bitfields:
+```
+position     100%  0xa5 | 0x01 | u32le round(value * 1 + 0) | sum8(bytes[0:6])
+level        100%  0xa5 | 0x02 | bits[0:4] = round(value * 1 + 0) | 0x00 | sum8(bytes[0:4])
+```
+
 ## What it can infer
 | Role | Example |
 |---|---|
 | constant header / command id | `5a`, `10` vs `20` vs `30` |
-| linear values, 8- or 16-bit LE/BE, several per action | `fan 2650` → `0a 5a`; `color 255 24 0` |
+| linear values, 8-, 16- or 32-bit LE/BE, several per action | `fan 2650` → `0a 5a`; `color 255 24 0`; `position 50000` → `50 c3 00 00` |
+| packed bitfields (bits beside constant flag bits, incl. 12-bit spans over two bytes) | `level 7` → `b7` = flags `b0` + bits[0:4] |
 | lookup tables (non-linear choices) | DPI 250→`08`, 500→`07` … |
 | rolling counters | sequence byte +1 per message |
 | checksums | sum8, xor8, neg/inv sum8, sum16, CRC8, CRC8/MAXIM, CRC16 CCITT-FALSE/XMODEM/MODBUS/KERMIT |
@@ -44,7 +53,13 @@ usb-rea scaffold lamp.pcapng -o lamp_driver.py
 Captured on Windows with USBPcap/Wireshark? Pass the `.pcapng` directly; markers are a JSON list of `{"label", "start", "end"}` epoch timestamps.
 
 ## MCP server
-`pip install "usb-rea[mcp]"` then add `usb-rea mcp` as a stdio server. Tools: `capture_start`, `capture_stop`, `mark_action`, `diff_actions`, `report`, `scaffold_driver`, `replay_packet` (refuses unless the human confirmed).
+`pip install "usb-rea[mcp]"` then add `usb-rea mcp` as a stdio server. Tools: `capture_start`, `capture_stop`, `mark_action`, `diff_actions`, `report`, `scaffold_driver`, `hid_descriptor` (decode a HID report descriptor / report payloads), `replay_packet` (refuses unless the human confirmed).
+
+With [uv](https://docs.astral.sh/uv/) no install step is needed:
+```json
+{"mcpServers": {"usb-rea": {"command": "uvx", "args": ["--from", "usb-rea[mcp]", "usb-rea", "mcp"]}}}
+```
+(until the PyPI release, use `--from "usb-rea[mcp] @ git+https://github.com/emirmrkaljevic/usb-rea"`)
 
 ## How it works
 1. `usb-rea capture start` — record traffic (usbmon / USBPcap)
@@ -74,12 +89,13 @@ usb-rea hid capture.pcapng --decode "10ff0d1d000000" --type Output
 - [x] driver scaffolding (pyusb, bulk/interrupt + control/HID SET_REPORT)
 - [x] confirmed replay
 - [x] MCP server
-- [x] rolling counters, multi-byte (16-bit LE/BE) values, lookup tables, multi-value actions
+- [x] rolling counters, multi-byte (16/32-bit LE/BE) values, lookup tables, multi-value actions
+- [x] packed bitfields
 - [x] validation against documented protocols (liquidctl, rivalcfg)
 - [x] HID report descriptor decoding (`usb-rea hid`), with captured commands mapped to their HID reports
 - [ ] emulated-device CI (dummy_hcd + configfs HID; script in `scripts/gadget_e2e.sh`)
 - [ ] real-hardware case studies
-- [ ] state machines / multi-packet transactions, 32-bit values, bitfields
+- [ ] state machines / multi-packet transactions
 
 ## Legal
 Reverse engineering for interoperability is permitted (EU Directive 2009/24/EC Art. 6, US DMCA §1201(f)). usb-rea only analyzes traffic of devices you own and never redistributes vendor code.

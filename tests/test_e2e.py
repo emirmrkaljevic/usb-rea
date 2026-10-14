@@ -43,6 +43,13 @@ def test_cli_demo(tmp_path, capsys):
     assert "brightness" in capsys.readouterr().out
 
 
+def test_cli_demo_dial(tmp_path, capsys):
+    assert main(["demo", "--device", "dial", "-o", str(tmp_path / "d")]) == 0
+    assert (tmp_path / "d" / "report.md").exists() and (tmp_path / "d" / "dial_driver.py").exists()
+    out = capsys.readouterr().out
+    assert "u32le" in out and "bits[0:4]" in out
+
+
 def test_cli_report_and_transfers(tmp_path, capsys):
     cap, _ = make_capture(tmp_path / "lamp.pcap")
     assert main(["report", str(cap), "-o", str(tmp_path / "r.md")]) == 0

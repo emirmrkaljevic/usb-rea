@@ -42,7 +42,7 @@ def main(argv=None) -> int:
 
     d = sub.add_parser("demo", help="generate a synthetic capture and run the whole pipeline")
     d.add_argument("-o", "--outdir", default="usb-rea-demo")
-    d.add_argument("--device", choices=["lamp", "fan"], default="lamp")
+    d.add_argument("--device", choices=["lamp", "fan", "dial"], default="lamp")
 
     r = sub.add_parser("replay", help="send one packet to a real device (requires --yes)")
     r.add_argument("vid", type=_int)

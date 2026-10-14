@@ -7,6 +7,9 @@
   report IDs, Push/Pop, extended usages, payload decoding; checked against the HID 1.11 boot mouse/keyboard descriptors
 - reports include a HID section and tag each inferred command with its HID report when the capture has GET_DESCRIPTOR 0x22
 - Dockerfile and glama.json so the MCP server can be listed on Glama
+- `usb-rea demo --device dial` (32-bit value + bitfield demo); README capability table, MCP tool list and roadmap
+  updated for 32-bit/bitfield inference and `hid_descriptor`
+- registry metadata: `server.json` (official MCP Registry, `mcp-name` marker in README) and `smithery.yaml`
 
 ## v0.1.0 — 2026-10-14
 First public release.
