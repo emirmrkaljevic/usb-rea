@@ -1,13 +1,9 @@
 """Synthetic usbmon captures with known ground truth, for tests and demos.
 
-The fake "lamp" protocol (VID 0x1234 / PID 0xABCD):
-  bulk OUT ep 0x01 (or HID SET_REPORT when transport='control'):
-    AA <cmd> <arg> 00 <sum8 of bytes 0..3>
-  cmd 0x01 brightness: arg = round(pct * 255 / 100)
-  cmd 0x02 power:      arg = 1/0
-  cmd 0x03 hue:        arg = hue_deg // 2   (0..179)
-  device ACKs each command on interrupt IN 0x81 with: 55 <cmd> 00
-  plus periodic interrupt IN polling noise: 00 00 00 00
+Devices (VID 0x1234 / PID 0xABCD):
+  lamp — bulk/HID: AA <cmd> <arg> 00 <sum8>; brightness/power/hue (8-bit)
+  fan  — 5A <seq> <cmd> <args> pad + CRC16/MODBUS; 16-bit BE RPM, RGB, lookup
+  dial — A5 <cmd> <args> <sum8>; 32-bit LE position + 4-bit level bitfield
 """
 from __future__ import annotations
 import json
@@ -102,16 +98,41 @@ def encode_fan(name: str, values: list[float], seq: int) -> bytes:
     return body + compute("crc16_modbus", body).to_bytes(2, "little")
 
 
+
+DIAL_ACTIONS = [
+    # values chosen so each of the 4 LE bytes varies (required to claim u32 over four u8s)
+    "position 0", "position 1000", "position 50000", "position 16843009", "position 2309737967",
+    "level 0", "level 3", "level 7", "level 10", "level 15",
+]
+
+
+def encode_dial(name: str, values: list[float]) -> bytes:
+    """Fake dial: A5 <cmd> <args...> <sum8>.
+
+    cmd 0x01 position: 32-bit LE absolute position (bytes 2..5)
+    cmd 0x02 level:    brightness 0..15 in bits 0..3 of byte 2; high nibble fixed 0xB
+    """
+    if name == "position":
+        body = bytes([0xA5, 0x01]) + int(values[0]).to_bytes(4, "little")
+    else:
+        # high nibble 0xB (const), low nibble = level
+        body = bytes([0xA5, 0x02, 0xB0 | (int(values[0]) & 0x0F), 0x00])
+    return body + bytes([sum(body) & 0xFF])
+
+
 def make_capture(path, actions: list[str] | None = None, transport: str = "bulk",
                  noise: bool = True, seed: int = 0, device: str = "lamp") -> tuple[Path, Path]:
     """Write <path> (pcap) and <path>.actions.json. Returns both paths.
 
-    device: 'lamp' (see module doc) or 'fan' (counter + 16-bit BE value + RGB + lookup + CRC16).
+    device: 'lamp' (see module doc), 'fan' (counter + 16-bit BE + RGB + lookup + CRC16),
+    or 'dial' (32-bit LE position + 4-bit brightness bitfield + sum8).
     """
     from .model import split_label, split_values
     rnd = random.Random(seed)
     if device == "fan":
         actions = actions or FAN_ACTIONS
+    elif device == "dial":
+        actions = actions or DIAL_ACTIONS
     actions = actions or ["brightness 0%", "brightness 25%", "brightness 50%", "brightness 75%",
                           "brightness 100%", "power off", "power on", "hue 0", "hue 120", "hue 240"]
     w = UsbmonWriter()
@@ -130,6 +151,8 @@ def make_capture(path, actions: list[str] | None = None, transport: str = "bulk"
         if device == "fan":
             seq += 1
             msg = encode_fan(*split_values(label), seq)
+        elif device == "dial":
+            msg = encode_dial(*split_values(label))
         else:
             name, value = split_label(label)
             msg = encode(name, value if value is not None else 0)

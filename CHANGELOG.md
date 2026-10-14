@@ -1,6 +1,8 @@
 # Changelog
 
 ## Unreleased
+- inference: 32-bit LE/BE linear values and packed bitfields (contiguous bits beside non-zero const bits,
+  including 12-bit spans across two LE bytes); synthetic `dial` device + encode round-trip tests
 - HID report descriptor decoder (`usb-rea hid`, MCP tool `hid_descriptor`): items, reports, bit-exact fields,
   report IDs, Push/Pop, extended usages, payload decoding; checked against the HID 1.11 boot mouse/keyboard descriptors
 - reports include a HID section and tag each inferred command with its HID report when the capture has GET_DESCRIPTOR 0x22

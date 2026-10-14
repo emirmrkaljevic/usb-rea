@@ -31,6 +31,13 @@ def encode(spec, values, seq=0):
         kind, off, w, end = f["kind"], f["offset"], f["width"], f["endian"]
         if kind == "value":
             _put(b, off, w, end, int(round(values[f["index"]] * f["scale"] + f["bias"] + 1e-9)))
+        elif kind == "bitfield":
+            bo, bw = f["bit_offset"], f["bit_width"]
+            v = int(round(values[f["index"]] * f["scale"] + f["bias"] + 1e-9)) & ((1 << bw) - 1)
+            span = int.from_bytes(b[off:off + w], "little")
+            mask = ((1 << bw) - 1) << bo
+            span = (span & ~mask) | (v << bo)
+            b[off:off + w] = span.to_bytes(w, "little")
         elif kind == "lookup":
             v = float(values[f["index"]])
             if v not in f["table"]:
@@ -86,8 +93,9 @@ def generate(proto: Protocol) -> str:
             s = c.setup
             setup = (s[0], s[1], s[2] | s[3] << 8, s[4] | s[5] << 8)
         fields = [dict(kind=f.kind, offset=f.offset, width=f.width, endian=f.endian, index=f.index,
-                       scale=f.scale, bias=f.bias, table=f.table, step=f.step, algo=f.algo, covers=f.covers)
-                  for f in c.fields if f.kind in ("value", "lookup", "counter", "checksum")]
+                       scale=f.scale, bias=f.bias, table=f.table, step=f.step, algo=f.algo, covers=f.covers,
+                       bit_offset=f.bit_offset, bit_width=f.bit_width)
+                  for f in c.fields if f.kind in ("value", "bitfield", "lookup", "counter", "checksum")]
         const = _ident(c.name).upper()
         specs.append(f"{const} = {dict(template=c.template().hex(), endpoint=c.endpoint, setup=setup, fields=fields)!r}\n")
         args = ", ".join(f"v{i}" for i in range(c.arity))

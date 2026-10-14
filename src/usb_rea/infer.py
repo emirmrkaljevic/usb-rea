@@ -1,7 +1,8 @@
 """Per-action diffing and protocol inference. Every claim carries frame evidence.
 
-Byte roles: const, command, value (linear, 8/16-bit LE/BE), lookup (value->byte table),
-counter (increments per message), checksum (sum/xor/CRC8/CRC16), unknown.
+Byte roles: const, command, value (linear, 8/16/32-bit LE/BE), bitfield (packed bits),
+lookup (value->byte table), counter (increments per message), checksum (sum/xor/CRC8/CRC16),
+unknown.
 """
 from __future__ import annotations
 from collections import Counter, defaultdict
@@ -15,7 +16,7 @@ from .model import Action, Transfer
 @dataclass
 class Field:
     offset: int
-    kind: str                 # const | command | value | lookup | counter | checksum | unknown
+    kind: str                 # const | command | value | bitfield | lookup | counter | checksum | unknown
     width: int = 1
     endian: str = "le"
     const: int | None = None
@@ -26,16 +27,27 @@ class Field:
     step: int | None = None
     algo: str | None = None
     covers: tuple[int, int] | None = None
+    bit_offset: int | None = None   # LSB of packed field within the width bytes
+    bit_width: int | None = None
     observed: list = field(default_factory=list)
     frames: list[int] = field(default_factory=list)
 
     def describe(self) -> str:
-        w = f"u16{self.endian} " if self.width == 2 else ""
+        if self.width == 4:
+            w = f"u32{self.endian} "
+        elif self.width == 2:
+            w = f"u16{self.endian} "
+        else:
+            w = ""
         if self.kind in ("const", "command"):
             return f"0x{self.const:02x}"
         if self.kind == "value":
             v = "value" if self.index == 0 else f"value[{self.index}]"
             return f"{w}round({v} * {self.scale:g} + {self.bias:g})"
+        if self.kind == "bitfield":
+            v = "value" if self.index == 0 else f"value[{self.index}]"
+            expr = f"round({v} * {self.scale:g} + {self.bias:g})"
+            return f"bits[{self.bit_offset}:{self.bit_offset + self.bit_width}] = {expr}"
         if self.kind == "lookup":
             return "lookup " + ", ".join(f"{k:g}→0x{v:02x}" for k, v in sorted(self.table.items()))
         if self.kind == "counter":
@@ -54,6 +66,21 @@ def _get(d: bytes, off: int, width: int, endian: str) -> int:
     return int.from_bytes(d[off:off + width], "little" if endian == "le" else "big")
 
 
+def _put_bits(b: bytearray, f: Field, v: int):
+    """Pack v into bits [bit_offset : bit_offset+bit_width) of the field's byte span (LE bit order)."""
+    bo, bw = f.bit_offset, f.bit_width
+    v &= (1 << bw) - 1
+    span = int.from_bytes(b[f.offset:f.offset + f.width], "little")
+    mask = ((1 << bw) - 1) << bo
+    span = (span & ~mask) | (v << bo)
+    b[f.offset:f.offset + f.width] = span.to_bytes(f.width, "little")
+
+
+def _get_bits(d: bytes, off: int, width: int, bit_offset: int, bit_width: int) -> int:
+    span = int.from_bytes(d[off:off + width], "little")
+    return (span >> bit_offset) & ((1 << bit_width) - 1)
+
+
 @dataclass
 class Command:
     name: str
@@ -69,7 +96,7 @@ class Command:
 
     @property
     def arity(self) -> int:
-        idx = [f.index for f in self.fields if f.kind in ("value", "lookup")]
+        idx = [f.index for f in self.fields if f.kind in ("value", "bitfield", "lookup")]
         return max(idx) + 1 if idx else 0
 
     def template(self) -> bytes:
@@ -77,6 +104,9 @@ class Command:
         for f in self.fields:
             if f.kind in ("const", "command"):
                 b[f.offset] = f.const
+            elif f.kind == "bitfield" and f.const is not None:
+                # plant constant bits outside the packed value (LE byte span)
+                b[f.offset:f.offset + f.width] = f.const.to_bytes(f.width, "little")
         return bytes(b)
 
     def encode(self, *values, seq: int = 0) -> bytes:
@@ -84,6 +114,8 @@ class Command:
         for f in self.fields:
             if f.kind == "value":
                 _put(b, f, int(round(values[f.index] * f.scale + f.bias + 1e-9)))
+            elif f.kind == "bitfield":
+                _put_bits(b, f, int(round(values[f.index] * f.scale + f.bias + 1e-9)))
             elif f.kind == "lookup":
                 _put(b, f, f.table[float(values[f.index])])
             elif f.kind == "counter":
@@ -214,6 +246,33 @@ def _find_counters(msgs: list[tuple[str, Transfer]]) -> dict:
     return out
 
 
+def _bit_run(cols: list[int], nbits: int = 8) -> tuple[int, int, int] | None:
+    """If varying bits form one contiguous run and outside bits are constant, return (bit_offset, bit_width, mask)."""
+    if len(set(cols)) < 2:
+        return None
+    xor_all = 0
+    for a, b in zip(cols, cols[1:]):
+        xor_all |= a ^ b
+    if xor_all == 0:
+        return None
+    lo = (xor_all & -xor_all).bit_length() - 1
+    hi = xor_all.bit_length() - 1
+    bw = hi - lo + 1
+    if bin(xor_all).count("1") != bw:
+        return None  # gaps — not a single packed field
+    mask = ((1 << bw) - 1) << lo
+    outside = ((1 << nbits) - 1) ^ mask
+    if len({c & outside for c in cols}) != 1:
+        return None
+    # full-width run, or outside bits that are merely zero padding, is a normal value field.
+    # A real bitfield has other constant (non-zero) bits packed beside it.
+    if outside == 0 or bw == nbits:
+        return None
+    if all((c & outside) == 0 for c in cols):
+        return None
+    return lo, bw, mask
+
+
 def _infer_command(name, items, length, notes, counters) -> Command:
     t0 = items[0][1]
     frames = [t.frame for _, t in items]
@@ -257,20 +316,36 @@ def _infer_command(name, items, length, notes, counters) -> Command:
                     if done:
                         break
 
-    # 2. values: 16-bit pairs where both bytes vary, then 8-bit, then lookup tables
+    # 2. values: bitfields (packed beside non-zero const bits) first, then 32/16-bit,
+    #    then 8-bit, then lookups. Prefer wider bitfield spans.
     for j in range(arity):
         xs = [v[j] if j < len(v) else None for v in vals]
         if any(x is None for x in xs):
             continue
-        for off in range(length - 1):
-            if not free(off, 2):
-                continue
-            for end in ("le", "be"):
-                ys = [_get(d, off, 2, end) for d in datas]
+        for width in (2, 1):
+            for off in range(length - width + 1):
+                if not free(off, width):
+                    continue
+                run = _bit_run([_get(d, off, width, "le") for d in datas], 8 * width)
+                if run is None:
+                    continue
+                bo, bw, _mask = run
+                ys = [_get_bits(d, off, width, bo, bw) for d in datas]
                 fit = _fit_linear(xs, ys)
-                if fit and all(len({d[i] for d in datas}) > 1 for i in (off, off + 1)):
-                    claim(Field(off, "value", 2, end, index=j, scale=fit[0], bias=fit[1], frames=frames))
-                    break
+                if fit:
+                    bg = _get(datas[0], off, width, "le") & ~_mask
+                    claim(Field(off, "bitfield", width, "le", const=bg, index=j,
+                                scale=fit[0], bias=fit[1], bit_offset=bo, bit_width=bw, frames=frames))
+        for width, ends in ((4, ("le", "be")), (2, ("le", "be"))):
+            for off in range(length - width + 1):
+                if not free(off, width):
+                    continue
+                for end in ends:
+                    ys = [_get(d, off, width, end) for d in datas]
+                    fit = _fit_linear(xs, ys)
+                    if fit and all(len({d[i] for d in datas}) > 1 for i in range(off, off + width)):
+                        claim(Field(off, "value", width, end, index=j, scale=fit[0], bias=fit[1], frames=frames))
+                        break
         for off in range(length):
             if free(off):
                 fit = _fit_linear(xs, [d[off] for d in datas])
