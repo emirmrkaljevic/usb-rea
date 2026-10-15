@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- `--labels`: analyse plain Wireshark/USBPcap captures without markers by splitting traffic at the pauses between clicks
 - inference: 32-bit LE/BE linear values and packed bitfields (contiguous bits beside non-zero const bits,
   including 12-bit spans across two LE bytes); synthetic `dial` device + encode round-trip tests
 - HID report descriptor decoder (`usb-rea hid`, MCP tool `hid_descriptor`): items, reports, bit-exact fields,

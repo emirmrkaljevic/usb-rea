@@ -45,3 +45,29 @@ def assign(transfers: list[Transfer], marks: list[dict]) -> list[Action]:
 def commands_of(action: Action) -> list[Transfer]:
     """Host->device messages that carry data (the interesting part)."""
     return [t for t in action.transfers if t.is_out and t.data]
+
+
+def segment_by_gaps(transfers: list[Transfer], labels: list[str]) -> list[dict]:
+    """Build markers without timestamps: split host->device traffic at the largest pauses.
+
+    For captures made in Wireshark/USBPcap where you simply clicked the actions in order with a
+    short pause between them. Returns markers usable by `assign`.
+    """
+    outs = sorted((t for t in transfers if t.is_out and t.data), key=lambda t: t.ts)
+    n = len(labels)
+    if n == 0 or len(outs) < n:
+        raise ValueError(f"{len(labels)} labels but only {len(outs)} host->device messages in the capture")
+    gaps = sorted(range(1, len(outs)), key=lambda i: outs[i].ts - outs[i - 1].ts, reverse=True)[:n - 1]
+    cuts = [0] + sorted(gaps) + [len(outs)]
+    marks = []
+    for label, a, b in zip(labels, cuts, cuts[1:]):
+        marks.append({"label": label, "start": outs[a].ts - 1e-6, "end": outs[b - 1].ts + 1e-6})
+    return marks
+
+
+def read_labels(spec: str) -> list[str]:
+    """Labels from a file (one per line) or a ';'-separated string."""
+    p = Path(spec)
+    if p.is_file():
+        return [l.strip() for l in p.read_text().splitlines() if l.strip() and not l.startswith("#")]
+    return [s.strip() for s in spec.split(";") if s.strip()]

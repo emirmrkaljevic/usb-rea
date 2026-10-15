@@ -50,7 +50,12 @@ usb-rea capture stop
 usb-rea report lamp.pcapng -o report.md
 usb-rea scaffold lamp.pcapng -o lamp_driver.py
 ```
-Captured on Windows with USBPcap/Wireshark? Pass the `.pcapng` directly; markers are a JSON list of `{"label", "start", "end"}` epoch timestamps.
+Captured on Windows with USBPcap/Wireshark and no markers? Click each action with a short pause in between, then just list them in order — usb-rea splits the traffic at the pauses:
+```bash
+usb-rea report lamp.pcapng --labels "brightness 0%; brightness 50%; brightness 100%; power off; power on"
+usb-rea scaffold lamp.pcapng --labels labels.txt -o lamp_driver.py   # one label per line
+```
+(Markers, if you have them, are a JSON list of `{"label", "start", "end"}` epoch timestamps.)
 
 ## MCP server
 `pip install "usb-rea[mcp] @ git+https://github.com/emirmrkaljevic/usb-rea"` then add `usb-rea mcp` as a stdio server. Tools: `capture_start`, `capture_stop`, `mark_action`, `diff_actions`, `report`, `scaffold_driver`, `hid_descriptor` (decode a HID report descriptor / report payloads), `replay_packet` (refuses unless the human confirmed).

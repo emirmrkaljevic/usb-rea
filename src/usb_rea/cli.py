@@ -31,6 +31,8 @@ def main(argv=None) -> int:
         s = sub.add_parser(name, help=hlp)
         s.add_argument("capture")
         s.add_argument("-m", "--markers")
+        s.add_argument("-l", "--labels", help="no markers? actions in the order you clicked them, "
+                       "';'-separated or a file with one per line; split at the pauses between them")
         s.add_argument("-d", "--device", type=int)
         s.add_argument("-o", "--out")
 
@@ -94,7 +96,11 @@ def main(argv=None) -> int:
         return 0
 
     from .pipeline import analyze, sha256
-    proto = analyze(a.capture, a.markers, a.device)
+    labels = None
+    if getattr(a, "labels", None):
+        from .actions import read_labels
+        labels = read_labels(a.labels)
+    proto = analyze(a.capture, a.markers, a.device, labels)
     if a.cmd == "infer":
         text = json.dumps(proto.to_dict(), indent=1, default=str)
     elif a.cmd == "report":

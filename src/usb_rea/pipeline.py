@@ -12,7 +12,8 @@ def default_markers(capture: str | Path) -> Path:
     return Path(str(capture) + ".actions.json")
 
 
-def analyze(capture: str | Path, markers: str | Path | None = None, device: int | None = None) -> Protocol:
+def analyze(capture: str | Path, markers: str | Path | None = None, device: int | None = None,
+            labels: list[str] | None = None) -> Protocol:
     ts = read_transfers(capture)
     ids = find_ids(ts)
     if device is None:
@@ -24,7 +25,12 @@ def analyze(capture: str | Path, markers: str | Path | None = None, device: int 
         device = max(counts, key=counts.get) if counts else None
     ts = [t for t in ts if device is None or t.device == device]
     vid, pid = ids.get(device, (None, None))
-    acts = assign(ts, load_markers(markers or default_markers(capture)))
+    if labels:
+        from .actions import segment_by_gaps
+        marks = segment_by_gaps(ts, labels)
+    else:
+        marks = load_markers(markers or default_markers(capture))
+    acts = assign(ts, marks)
     proto = infer(acts, vid, pid)
     proto.hid = hid_summary(ts, proto)
     return proto
