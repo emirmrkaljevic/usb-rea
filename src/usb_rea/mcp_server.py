@@ -48,6 +48,14 @@ def build():
         return generate(analyze(capture, markers, device))
 
     @app.tool()
+    def wireshark_dissector(capture: str, markers: str | None = None, device: int | None = None,
+                            name: str = "usbrea") -> str:
+        """Generate a Wireshark Lua dissector for the inferred protocol (labels fields, decodes values,
+        verifies checksums). Load it with `wireshark -X lua_script:<file>.lua capture.pcapng`."""
+        from .dissector import generate as dissector
+        return dissector(analyze(capture, markers, device), name)
+
+    @app.tool()
     def hid_descriptor(source: str, decode_hex: str | None = None, report_type: str = "Input") -> str:
         """Decode a HID report descriptor: `source` is a capture path (finds GET_DESCRIPTOR 0x22) or descriptor hex.
         Optionally decode one report payload (`decode_hex`) of `report_type` Input/Output/Feature."""

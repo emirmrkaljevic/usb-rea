@@ -1,6 +1,11 @@
 # Changelog
 
 ## Unreleased
+- `usb-rea dissector` (MCP tool `wireshark_dissector`): generate a Wireshark Lua dissector for the inferred protocol —
+  command names in the Info column, decoded values, counters, lookup labels, checksum verification with expert info;
+  tested against real tshark 4.4 in CI. `usb-rea demo` now writes `<device>.lua` too
+- synthetic captures: submission and completion now share one URB id and use proper usbmon data flags,
+  so Wireshark pairs requests with responses (GET DESCRIPTOR responses and VID/PID are decoded)
 - `--labels`: analyse plain Wireshark/USBPcap captures without markers by splitting traffic at the pauses between clicks
 - inference: 32-bit LE/BE linear values and packed bitfields (contiguous bits beside non-zero const bits,
   including 12-bit spans across two LE bytes); synthetic `dial` device + encode round-trip tests

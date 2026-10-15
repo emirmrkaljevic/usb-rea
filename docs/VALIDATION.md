@@ -9,6 +9,7 @@ usb-rea is validated without anyone's hardware in four ways. All of them run in 
 | liquidctl Kraken X (1e71:170e) | recovers `02 4d <channel> 00 <duty>` exactly as liquidctl's `kraken2.py` builds it | `tests/test_validation.py` |
 | rivalcfg Rival 100 (1038:1702) | recovers non-linear DPI/polling lookup tables and RGB color as in rivalcfg's `rival100.py` | `tests/test_validation.py` |
 | CRC catalogue | CRC8/CRC16 variants match the standard `123456789` check values | `tests/test_checksums.py` |
+| Wireshark dissector | generated Lua plugin labels every command in tshark 4.4, values match, checksums verify, a corrupted checksum is flagged; Lua checksum helpers match the Python ones | `tests/test_dissector.py` |
 | Real captures | parser handles public usbmon/USBPcap captures (downloaded on demand) | `tests/test_public_pcaps.py` |
 
 The driver generated from each capture is also executed against a mocked pyusb device and must emit

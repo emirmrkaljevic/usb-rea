@@ -32,32 +32,42 @@ class UsbmonWriter:
         self.pkts: list[tuple[float, bytes]] = []
         self.bus, self.dev, self._id = bus, dev, 0x1000
 
-    def _pkt(self, ts, ev, xtype, ep, data=b"", setup=None, length=None):
-        self._id += 1
+    def _pkt(self, ts, ev, xtype, ep, data=b"", setup=None, length=None, urb=None):
         sec, usec = int(ts), int(round((ts - int(ts)) * 1e6))
+        # usbmon: data flag 0 = data present, '<' = IN submit / '>' = OUT completion (nothing attached)
+        flag = b"\x00" if data else (b"<" if ev == "S" else b">")
         hdr = struct.pack(
-            "<QcBBBHccqiiII8siiII", self._id, ev.encode(), xtype, ep, self.dev, self.bus,
-            b"\x00" if setup is not None else b"-", b"=" if data else b"<",
+            "<QcBBBHccqiiII8siiII", urb, ev.encode(), xtype, ep, self.dev, self.bus,
+            b"\x00" if setup is not None else b"-", flag,
             sec, usec, -115 if ev == "S" else 0,
             len(data) if length is None else length, len(data),
             setup or b"\x00" * 8, 0, 0, 0, 0)
         self.pkts.append((ts, hdr + data))
 
+    def _urb(self) -> int:
+        # submission and completion share one URB id, as in real usbmon (Wireshark pairs them by it)
+        self._id += 1
+        return 0xFFFF8880_00000000 | self._id << 8
+
     def out(self, ts, ep, data, xtype=3):
-        self._pkt(ts, "S", xtype, ep & 0x7F, data)
-        self._pkt(ts + 0.0001, "C", xtype, ep & 0x7F, b"", length=len(data))
+        u = self._urb()
+        self._pkt(ts, "S", xtype, ep & 0x7F, data, urb=u)
+        self._pkt(ts + 0.0001, "C", xtype, ep & 0x7F, b"", length=len(data), urb=u)
 
     def in_(self, ts, ep, data, xtype=1):
-        self._pkt(ts, "S", xtype, ep | 0x80, b"", length=64)
-        self._pkt(ts + 0.0002, "C", xtype, ep | 0x80, data)
+        u = self._urb()
+        self._pkt(ts, "S", xtype, ep | 0x80, b"", length=64, urb=u)
+        self._pkt(ts + 0.0002, "C", xtype, ep | 0x80, data, urb=u)
 
     def control_out(self, ts, setup: bytes, data: bytes):
-        self._pkt(ts, "S", 2, 0x00, data, setup=setup)
-        self._pkt(ts + 0.0001, "C", 2, 0x00, b"")
+        u = self._urb()
+        self._pkt(ts, "S", 2, 0x00, data, setup=setup, urb=u)
+        self._pkt(ts + 0.0001, "C", 2, 0x00, b"", length=len(data), urb=u)
 
     def control_in(self, ts, setup: bytes, data: bytes):
-        self._pkt(ts, "S", 2, 0x80, b"", setup=setup, length=struct.unpack("<H", setup[6:8])[0])
-        self._pkt(ts + 0.0002, "C", 2, 0x80, data)
+        u = self._urb()
+        self._pkt(ts, "S", 2, 0x80, b"", setup=setup, length=struct.unpack("<H", setup[6:8])[0], urb=u)
+        self._pkt(ts + 0.0002, "C", 2, 0x80, data, urb=u)
 
     def save(self, path):
         with open(path, "wb") as f:

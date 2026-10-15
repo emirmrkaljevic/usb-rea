@@ -27,7 +27,8 @@ def main(argv=None) -> int:
     m.add_argument("-m", "--markers", default="capture.pcapng.actions.json")
 
     for name, hlp in (("transfers", "list parsed transfers"), ("infer", "infer protocol (JSON)"),
-                      ("report", "write evidence report (markdown)"), ("scaffold", "write pyusb driver")):
+                      ("report", "write evidence report (markdown)"), ("scaffold", "write pyusb driver"),
+                      ("dissector", "write a Wireshark Lua dissector")):
         s = sub.add_parser(name, help=hlp)
         s.add_argument("capture")
         s.add_argument("-m", "--markers")
@@ -35,6 +36,8 @@ def main(argv=None) -> int:
                        "';'-separated or a file with one per line; split at the pauses between them")
         s.add_argument("-d", "--device", type=int)
         s.add_argument("-o", "--out")
+        if name == "dissector":
+            s.add_argument("-n", "--name", default="usbrea", help="protocol/filter name in Wireshark")
 
     h = sub.add_parser("hid", help="decode a HID report descriptor (from a capture or hex)")
     h.add_argument("source", help="capture file, or descriptor hex (e.g. from /sys/class/hidraw/*/device/report_descriptor)")
@@ -106,6 +109,9 @@ def main(argv=None) -> int:
     elif a.cmd == "report":
         from .report import render
         text = render(proto, a.capture, sha256(a.capture))
+    elif a.cmd == "dissector":
+        from .dissector import generate
+        text = generate(proto, a.name)
     else:
         from .scaffold import generate
         text = generate(proto)
@@ -159,12 +165,14 @@ def _demo(outdir: Path, device: str = "lamp") -> int:
     proto = analyze(cap)
     (outdir / "report.md").write_text(render(proto, str(cap), sha256(cap)))
     (outdir / f"{device}_driver.py").write_text(generate(proto))
+    from .dissector import generate as dissector
+    (outdir / f"{device}.lua").write_text(dissector(proto))
     (outdir / "__init__.py").touch()
     print(f"captured {sum(len(c.samples) for c in proto.commands)} labelled actions, "
           f"device {proto.vid:04x}:{proto.pid:04x}\n")
     for c in proto.commands:
         print(f"{c.name:12s} {c.confidence:4.0%}  " + " | ".join(f.describe() for f in c.fields))
-    print(f"\nwrote {outdir}/report.md and {outdir}/{device}_driver.py")
+    print(f"\nwrote {outdir}/report.md, {outdir}/{device}_driver.py and the Wireshark dissector {outdir}/{device}.lua")
     return 0
 
 

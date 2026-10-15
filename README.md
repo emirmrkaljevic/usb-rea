@@ -49,6 +49,7 @@ usb-rea mark -m lamp.pcapng.actions.json "brightness 50%"   # ...repeat for 3+ v
 usb-rea capture stop
 usb-rea report lamp.pcapng -o report.md
 usb-rea scaffold lamp.pcapng -o lamp_driver.py
+usb-rea dissector lamp.pcapng -o lamp.lua      # Wireshark dissector for the same protocol
 ```
 Captured on Windows with USBPcap/Wireshark and no markers? Click each action with a short pause in between, then just list them in order — usb-rea splits the traffic at the pauses:
 ```bash
@@ -58,7 +59,7 @@ usb-rea scaffold lamp.pcapng --labels labels.txt -o lamp_driver.py   # one label
 (Markers, if you have them, are a JSON list of `{"label", "start", "end"}` epoch timestamps.)
 
 ## MCP server
-`pip install "usb-rea[mcp] @ git+https://github.com/emirmrkaljevic/usb-rea"` then add `usb-rea mcp` as a stdio server. Tools: `capture_start`, `capture_stop`, `mark_action`, `diff_actions`, `report`, `scaffold_driver`, `hid_descriptor` (decode a HID report descriptor / report payloads), `replay_packet` (refuses unless the human confirmed).
+`pip install "usb-rea[mcp] @ git+https://github.com/emirmrkaljevic/usb-rea"` then add `usb-rea mcp` as a stdio server. Tools: `capture_start`, `capture_stop`, `mark_action`, `diff_actions`, `report`, `scaffold_driver`, `hid_descriptor` (decode a HID report descriptor / report payloads), `wireshark_dissector`, `replay_packet` (refuses unless the human confirmed).
 
 With [uv](https://docs.astral.sh/uv/) no install step is needed:
 ```json
@@ -72,9 +73,22 @@ Once usb-rea is on PyPI, `--from "usb-rea[mcp]"` is enough. The server is also l
 3. `usb-rea diff` — which bytes change per action, value correlation, checksums, counters
 4. `usb-rea infer` — message templates + evidence report
 5. `usb-rea scaffold` — generate a pyusb driver and replay tests
-6. `usb-rea replay` — send packets to the device (only with explicit confirmation)
-7. `usb-rea hid` — decode a HID report descriptor from a capture (GET_DESCRIPTOR 0x22) or from hex, and decode report payloads
-8. `usb-rea mcp` — the same tools as an MCP server for AI agents
+6. `usb-rea dissector` — write a Wireshark Lua dissector for the inferred protocol
+7. `usb-rea replay` — send packets to the device (only with explicit confirmation)
+8. `usb-rea hid` — decode a HID report descriptor from a capture (GET_DESCRIPTOR 0x22) or from hex, and decode report payloads
+9. `usb-rea mcp` — the same tools as an MCP server for AI agents
+
+### Wireshark dissector
+`usb-rea dissector capture.pcapng -o lamp.lua` turns the inferred protocol into a Wireshark Lua plugin, so you can keep
+capturing and read the traffic as commands instead of hex:
+```bash
+wireshark -X lua_script:lamp.lua capture.pcapng
+tshark -X lua_script:lamp.lua -r capture.pcapng -Y 'usbrea.command == "brightness"'
+```
+Each matching packet gets a `usbrea` tree with the command name, decoded values (`usbrea.brightness.value`), counters,
+lookup labels, and a checksum check (`usbrea.checksum_ok`, with an expert warning on mismatch); the Info column reads
+`brightness 50`. It works for bulk, interrupt and control/HID SET_REPORT transfers, from usbmon or USBPcap, and needs no
+bit library (Wireshark 3.x and 4.x). `-n NAME` changes the filter prefix. CI runs every generated dissector through tshark.
 
 ### HID devices
 Most RGB keyboards, mice, headsets and LCD gadgets are HID with a vendor-defined page. If the capture includes the

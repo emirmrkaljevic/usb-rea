@@ -71,7 +71,7 @@ def test_mcp_tools(tmp_path):
     app = build()
     names = {t.name for t in asyncio.run(app.list_tools())}
     assert {"capture_start", "capture_stop", "mark_action", "diff_actions", "report",
-            "scaffold_driver", "replay_packet", "hid_descriptor"} <= names
+            "scaffold_driver", "replay_packet", "hid_descriptor", "wireshark_dissector"} <= names
     cap, _ = make_capture(tmp_path / "lamp.pcap")
     res = asyncio.run(app.call_tool("report", {"capture": str(cap)}))
     assert "brightness" in str(res)
