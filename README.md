@@ -2,7 +2,7 @@
 
 <!-- mcp-name: io.github.emirmrkaljevic/usb-rea -->
 
-[![ci](https://github.com/emirmrkaljevic/usb-rea/actions/workflows/ci.yml/badge.svg)](https://github.com/emirmrkaljevic/usb-rea/actions/workflows/ci.yml) ![license](https://img.shields.io/badge/license-MIT-blue)
+[![ci](https://github.com/emirmrkaljevic/usb-rea/actions/workflows/ci.yml/badge.svg)](https://github.com/emirmrkaljevic/usb-rea/actions/workflows/ci.yml) ![license](https://img.shields.io/badge/license-MIT-blue) [![usb-rea MCP server](https://glama.ai/mcp/servers/emirmrkaljevic/usb-rea/badges/score.svg)](https://glama.ai/mcp/servers/emirmrkaljevic/usb-rea)
 
 ![usb-rea demo: capture labelled clicks, get the protocol and a working driver](docs/demo.gif)
 
@@ -53,13 +53,13 @@ usb-rea scaffold lamp.pcapng -o lamp_driver.py
 Captured on Windows with USBPcap/Wireshark? Pass the `.pcapng` directly; markers are a JSON list of `{"label", "start", "end"}` epoch timestamps.
 
 ## MCP server
-`pip install "usb-rea[mcp]"` then add `usb-rea mcp` as a stdio server. Tools: `capture_start`, `capture_stop`, `mark_action`, `diff_actions`, `report`, `scaffold_driver`, `hid_descriptor` (decode a HID report descriptor / report payloads), `replay_packet` (refuses unless the human confirmed).
+`pip install "usb-rea[mcp] @ git+https://github.com/emirmrkaljevic/usb-rea"` then add `usb-rea mcp` as a stdio server. Tools: `capture_start`, `capture_stop`, `mark_action`, `diff_actions`, `report`, `scaffold_driver`, `hid_descriptor` (decode a HID report descriptor / report payloads), `replay_packet` (refuses unless the human confirmed).
 
 With [uv](https://docs.astral.sh/uv/) no install step is needed:
 ```json
-{"mcpServers": {"usb-rea": {"command": "uvx", "args": ["--from", "usb-rea[mcp]", "usb-rea", "mcp"]}}}
+{"mcpServers": {"usb-rea": {"command": "uvx", "args": ["--from", "usb-rea[mcp] @ git+https://github.com/emirmrkaljevic/usb-rea", "usb-rea", "mcp"]}}}
 ```
-(until the PyPI release, use `--from "usb-rea[mcp] @ git+https://github.com/emirmrkaljevic/usb-rea"`)
+Once usb-rea is on PyPI, `--from "usb-rea[mcp]"` is enough. The server is also listed on [Glama](https://glama.ai/mcp/servers/emirmrkaljevic/usb-rea), which builds it from the repo's `Dockerfile` and checks that it starts and lists its tools.
 
 ## How it works
 1. `usb-rea capture start` — record traffic (usbmon / USBPcap)

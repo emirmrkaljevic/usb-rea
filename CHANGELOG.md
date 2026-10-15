@@ -10,6 +10,7 @@
 - `usb-rea demo --device dial` (32-bit value + bitfield demo); README capability table, MCP tool list and roadmap
   updated for 32-bit/bitfield inference and `hid_descriptor`
 - registry metadata: `server.json` (official MCP Registry, `mcp-name` marker in README) and `smithery.yaml`
+- listed on Glama (score badge in README); MCP install snippets now use the git URL so they work before the PyPI release
 
 ## v0.1.0 — 2026-10-14
 First public release.
