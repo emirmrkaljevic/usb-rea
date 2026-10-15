@@ -1,6 +1,10 @@
 # Changelog
 
 ## Unreleased
+
+## v0.2.0 — 2026-10-15
+Wireshark dissector generator, HID descriptor decoding, wider inference, marker-free captures.
+
 - `usb-rea dissector` (MCP tool `wireshark_dissector`): generate a Wireshark Lua dissector for the inferred protocol —
   command names in the Info column, decoded values, counters, lookup labels, checksum verification with expert info;
   tested against real tshark 4.4 in CI. `usb-rea demo` now writes `<device>.lua` too
