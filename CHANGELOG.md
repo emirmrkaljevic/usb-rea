@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- MCP tools: richer descriptions (side effects, privileges, when-to-use) and `pydantic.Field` parameter
+  descriptions so Glama TDQS can score the schema; analysis tools accept the same `labels` string/file
+  as the CLI for marker-free captures
+
 ## v0.2.0 — 2026-10-15
 Wireshark dissector generator, HID descriptor decoding, wider inference, marker-free captures.
 

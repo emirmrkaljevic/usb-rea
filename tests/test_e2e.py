@@ -69,9 +69,18 @@ def test_mcp_tools(tmp_path):
     pytest.importorskip("mcp")
     from usb_rea.mcp_server import build
     app = build()
-    names = {t.name for t in asyncio.run(app.list_tools())}
+    tools = asyncio.run(app.list_tools())
+    names = {t.name for t in tools}
     assert {"capture_start", "capture_stop", "mark_action", "diff_actions", "report",
             "scaffold_driver", "replay_packet", "hid_descriptor", "wireshark_dissector"} <= names
+    by_name = {t.name: t for t in tools}
+    # Glama TDQS: every parameter should carry a schema description
+    for t in tools:
+        props = t.input_schema.get("properties") or {}
+        for pname, schema in props.items():
+            assert schema.get("description"), f"{t.name}.{pname} missing description"
+    assert "labels" in (by_name["report"].input_schema.get("properties") or {})
+    assert "elevated" in (by_name["capture_start"].description or "").lower() or "privileges" in (by_name["capture_start"].description or "").lower()
     cap, _ = make_capture(tmp_path / "lamp.pcap")
     res = asyncio.run(app.call_tool("report", {"capture": str(cap)}))
     assert "brightness" in str(res)

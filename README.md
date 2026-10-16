@@ -59,7 +59,7 @@ usb-rea scaffold lamp.pcapng --labels labels.txt -o lamp_driver.py   # one label
 (Markers, if you have them, are a JSON list of `{"label", "start", "end"}` epoch timestamps.)
 
 ## MCP server
-`pip install "usb-rea[mcp] @ git+https://github.com/emirmrkaljevic/usb-rea"` then add `usb-rea mcp` as a stdio server. Tools: `capture_start`, `capture_stop`, `mark_action`, `diff_actions`, `report`, `scaffold_driver`, `hid_descriptor` (decode a HID report descriptor / report payloads), `wireshark_dissector`, `replay_packet` (refuses unless the human confirmed).
+`pip install "usb-rea[mcp] @ git+https://github.com/emirmrkaljevic/usb-rea"` then add `usb-rea mcp` as a stdio server. Tools: `capture_start`, `capture_stop`, `mark_action`, `diff_actions`, `report`, `scaffold_driver`, `hid_descriptor` (decode a HID report descriptor / report payloads), `wireshark_dissector`, `replay_packet` (refuses unless the human confirmed). Analysis tools accept the same `labels` argument as the CLI for marker-free captures.
 
 With [uv](https://docs.astral.sh/uv/) no install step is needed:
 ```json
