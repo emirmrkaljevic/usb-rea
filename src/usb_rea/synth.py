@@ -185,7 +185,7 @@ def make_capture(path, actions: list[str] | None = None, transport: str = "bulk"
 def capture_from_messages(path, messages, vid: int, pid: int, noise: bool = True, seed: int = 0):
     """Write a usbmon capture from explicit host->device messages.
 
-    messages: list of (label, data, how) where how is ("bulk"|"interrupt", endpoint) or
+    messages: list of (label, data, how) where data is bytes or a list of bytes (multi-packet) and how is ("bulk"|"interrupt", endpoint) or
     ("control", 8-byte setup). Used to replay protocols documented by other projects.
     """
     rnd = random.Random(seed)
@@ -201,10 +201,11 @@ def capture_from_messages(path, messages, vid: int, pid: int, noise: bool = True
         if noise:
             for _ in range(rnd.randint(0, 2)):
                 w.in_(t + rnd.random() * 0.2, 0x81, bytes(8))
-        if how[0] == "control":
-            w.control_out(t + 0.3, how[1], data)
-        else:
-            w.out(t + 0.3, how[1], data, xtype=1 if how[0] == "interrupt" else 3)
+        for i, pkt in enumerate(data if isinstance(data, list) else [data]):  # list = multi-packet
+            if how[0] == "control":
+                w.control_out(t + 0.3 + 0.02 * i, how[1], pkt)
+            else:
+                w.out(t + 0.3 + 0.02 * i, how[1], pkt, xtype=1 if how[0] == "interrupt" else 3)
         t += 1.0
         marks.append({"label": label, "start": start, "end": t - 0.01})
         t += 0.5

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## v0.2.1 — 2026-10-16
+- multi-packet transactions: actions that send several packets (e.g. write + apply) are inferred as one command; the driver sends all packets in order
+- cross-packet checksums (a later packet carrying a checksum of an earlier one)
+- fix: `mcp` is now a core dependency, so a plain `pip install usb-rea` gives a working `usb-rea mcp`
+
 - MCP tools: richer descriptions (side effects, privileges, when-to-use) and `pydantic.Field` parameter
   descriptions so Glama TDQS can score the schema; analysis tools accept the same `labels` string/file
   as the CLI for marker-free captures

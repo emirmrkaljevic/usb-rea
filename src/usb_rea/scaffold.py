@@ -25,7 +25,7 @@ def _put(b, off, width, endian, v):
     b[off:off + width] = v.to_bytes(width, "little" if endian == "le" else "big")
 
 
-def encode(spec, values, seq=0):
+def encode(spec, values, seq=0, prev=()):
     b = bytearray.fromhex(spec["template"])
     for f in spec["fields"]:
         kind, off, w, end = f["kind"], f["offset"], f["width"], f["endian"]
@@ -48,7 +48,8 @@ def encode(spec, values, seq=0):
     for f in spec["fields"]:
         if f["kind"] == "checksum":
             a, z = f["covers"]
-            _put(b, f["offset"], f["width"], f["endian"], compute(f["algo"], b[a:z]))
+            src = b if f.get("source") is None else prev[f["source"]]
+            _put(b, f["offset"], f["width"], f["endian"], compute(f["algo"], src[a:z]))
     return bytes(b)
 
 
@@ -66,9 +67,15 @@ class Device:
                     except usb.core.USBError:
                         pass
 
-    def _send(self, spec, *values):
+    def _send(self, spec, *values, prev=None):
+        if "then" in spec:  # multi-packet transaction
+            first = {{k: v for k, v in spec.items() if k != "then"}}
+            sent = []
+            return [self._send(step, *values, prev=sent) for step in [first, *spec["then"]]]
         self.seq += 1
-        data = encode(spec, values, self.seq)
+        data = encode(spec, values, self.seq, prev)
+        if prev is not None:
+            prev.append(data)
         if spec["setup"]:
             bm, req, wv, wi = spec["setup"]
             return self.dev.ctrl_transfer(bm, req, wv, wi, data)
@@ -87,17 +94,23 @@ def generate(proto: Protocol) -> str:
     ids = f"{proto.vid:04x}:{proto.pid:04x}" if proto.vid is not None else "(unknown id)"
     out = [HEADER.format(vid=vid, pid=pid, ids=ids, checksums=inspect.getsource(checksums).split('"""', 2)[2])]
     specs = []
-    for c in proto.commands:
+    def spec_of(c):
         setup = None
         if c.setup:
             s = c.setup
             setup = (s[0], s[1], s[2] | s[3] << 8, s[4] | s[5] << 8)
         fields = [dict(kind=f.kind, offset=f.offset, width=f.width, endian=f.endian, index=f.index,
                        scale=f.scale, bias=f.bias, table=f.table, step=f.step, algo=f.algo, covers=f.covers,
-                       bit_offset=f.bit_offset, bit_width=f.bit_width)
+                       bit_offset=f.bit_offset, bit_width=f.bit_width, source=f.source)
                   for f in c.fields if f.kind in ("value", "bitfield", "lookup", "counter", "checksum")]
+        return dict(template=c.template().hex(), endpoint=c.endpoint, setup=setup, fields=fields)
+
+    for c in proto.commands:
         const = _ident(c.name).upper()
-        specs.append(f"{const} = {dict(template=c.template().hex(), endpoint=c.endpoint, setup=setup, fields=fields)!r}\n")
+        spec = spec_of(c)
+        if c.steps:
+            spec["then"] = [spec_of(x) for x in c.steps]
+        specs.append(f"{const} = {spec!r}\n")
         args = ", ".join(f"v{i}" for i in range(c.arity))
         sig = f"self, {args}" if args else "self"
         frames = ", ".join(map(str, c.frames[:8]))

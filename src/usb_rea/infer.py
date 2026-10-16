@@ -27,6 +27,7 @@ class Field:
     step: int | None = None
     algo: str | None = None
     covers: tuple[int, int] | None = None
+    source: int | None = None  # checksum over an earlier packet of the same transaction
     bit_offset: int | None = None   # LSB of packed field within the width bytes
     bit_width: int | None = None
     observed: list = field(default_factory=list)
@@ -53,7 +54,8 @@ class Field:
         if self.kind == "counter":
             return f"counter (+{self.step} per message)"
         if self.kind == "checksum":
-            return f"{w}{self.algo}(bytes[{self.covers[0]}:{self.covers[1]}])"
+            src = f"packet{self.source + 1}" if self.source is not None else "bytes"
+            return f"{w}{self.algo}({src}[{self.covers[0]}:{self.covers[1]}])"
         return "?"
 
 
@@ -93,10 +95,11 @@ class Command:
     frames: list[int]
     samples: list[tuple[str, str, int]]
     notes: list[str] = field(default_factory=list)
+    steps: list["Command"] = field(default_factory=list)  # follow-up packets of a multi-packet transaction
 
     @property
     def arity(self) -> int:
-        idx = [f.index for f in self.fields if f.kind in ("value", "bitfield", "lookup")]
+        idx = [f.index for c in [self, *self.steps] for f in c.fields if f.kind in ("value", "bitfield", "lookup")]
         return max(idx) + 1 if idx else 0
 
     def template(self) -> bytes:
@@ -109,7 +112,14 @@ class Command:
                 b[f.offset:f.offset + f.width] = f.const.to_bytes(f.width, "little")
         return bytes(b)
 
-    def encode(self, *values, seq: int = 0) -> bytes:
+    def encode_all(self, *values, seq: int = 0) -> list[bytes]:
+        """Every packet of the transaction, in order (the counter advances per packet)."""
+        out: list[bytes] = []
+        for i, c in enumerate([self, *self.steps]):
+            out.append(c.encode(*values, seq=seq + i, prev=out))
+        return out
+
+    def encode(self, *values, seq: int = 0, prev: list[bytes] | None = None) -> bytes:
         b = bytearray(self.template())
         for f in self.fields:
             if f.kind == "value":
@@ -122,7 +132,8 @@ class Command:
                 _put(b, f, seq * f.step)
         for f in self.fields:
             if f.kind == "checksum":
-                _put(b, f, compute(f.algo, b[f.covers[0]:f.covers[1]]))
+                src = b if f.source is None else prev[f.source]
+                _put(b, f, compute(f.algo, src[f.covers[0]:f.covers[1]]))
         return bytes(b)
 
 
@@ -137,7 +148,8 @@ class Protocol:
     def to_dict(self):
         d = asdict(self)
         for c in d["commands"]:
-            c["setup"] = c["setup"].hex() if c["setup"] else None
+            for x in [c, *c["steps"]]:
+                x["setup"] = x["setup"].hex() if x["setup"] else None
         return d
 
 
@@ -179,26 +191,42 @@ def infer(actions: list[Action], vid: int | None = None, pid: int | None = None)
             seen[p] += 1
     bg = {p for p, c in seen.items() if len(actions) > 2 and c >= 0.8 * len(actions)}
 
-    groups: dict[str, list[tuple[Action, Transfer]]] = defaultdict(list)
+    groups: dict[str, list[tuple[Action, list[Transfer]]]] = defaultdict(list)
     unmatched = []
     for a in actions:
         msgs = [t for t in commands_of(a) if (t.key(), t.data) not in bg]
         if not msgs:
             unmatched.append(a.label)
             continue
-        groups[a.name if not a.values or len(a.values) == 1 else _name(a)].append((a, msgs[0]))
+        groups[a.name if not a.values or len(a.values) == 1 else _name(a)].append((a, msgs))
 
-    counters = _find_counters([(n, t) for n, items in groups.items() for _, t in items])
+    counters = _find_counters([(n, t) for n, items in groups.items() for _, ms in items for t in ms])
 
     commands = []
     for name, items in groups.items():
-        keys = Counter((t.key(), len(t.data)) for _, t in items)
-        (key, length), _ = keys.most_common(1)[0]
-        ok = [(a, t) for a, t in items if (t.key(), len(t.data)) == (key, length)]
+        # transaction shape: how many packets this action sends, and on which channels
+        shapes = Counter(tuple((t.key(), len(t.data)) for t in ms) for _, ms in items)
+        shape, _ = shapes.most_common(1)[0]
+        ok = [(a, ms) for a, ms in items if tuple((t.key(), len(t.data)) for t in ms) == shape]
+        if len(ok) < 2 and len(shape) > 1:
+            # not enough identical transactions: fall back to the first packet only
+            shape = (shape[0],)
+            ok = [(a, ms[:1]) for a, ms in items if (ms[0].key(), len(ms[0].data)) == shape[0]]
         notes = []
         if len(ok) < len(items):
-            notes.append(f"{len(items) - len(ok)} action(s) used a different endpoint/length and were ignored")
-        commands.append(_infer_command(name, ok, length, notes, counters.get(key, {})))
+            notes.append(f"{len(items) - len(ok)} action(s) sent a differently shaped transaction and were ignored")
+        steps = []
+        for j, (key, length) in enumerate(shape):
+            sub = [(a, ms[j]) for a, ms in ok]
+            steps.append(_infer_command(name if j == 0 else f"{name} [packet {j + 1}]", sub, length,
+                                        notes if j == 0 else [], counters.get(key, {})))
+        _cross_packet_checksums(steps, [[t.data for t in ms] for _, ms in ok])
+        head = steps[0]
+        head.steps = steps[1:]
+        if head.steps:
+            head.notes.append(f"multi-packet transaction: {len(shape)} packets per action, sent in this order")
+            head.confidence = round(min(c.confidence for c in steps), 2)
+        commands.append(head)
 
     # command-id bytes: const positions whose value differs between commands on the same channel
     by_chan = defaultdict(list)
@@ -213,6 +241,35 @@ def infer(actions: list[Action], vid: int | None = None, pid: int | None = None)
                 for f in fs:
                     f.kind = "command"
     return Protocol(vid, pid, commands, unmatched)
+
+
+def _cross_packet_checksums(steps: list[Command], samples: list[list[bytes]]):
+    """A later packet may carry a checksum of an earlier one (e.g. 'apply' after 'write')."""
+    for j in range(1, len(steps)):
+        for f in steps[j].fields:
+            if f.kind not in ("unknown", "lookup") or f.width != 1:
+                continue
+            cur = [s[j][f.offset] for s in samples]
+            found = False
+            for i in range(j):
+                n = min(len(s[i]) for s in samples)
+                for a in range(n):
+                    for b in range(n, a + 1, -1):
+                        for algo, (w, _) in CHECKSUMS.items():
+                            if w == 1 and all(compute(algo, s[i][a:b]) == c for s, c in zip(samples, cur)):
+                                f.kind, f.algo, f.covers, f.source, f.table = "checksum", algo, (a, b), i, None
+                                found = True
+                                break
+                        if found:
+                            break
+                    if found:
+                        break
+                if found:
+                    break
+        unknown = sum(x.kind == "unknown" for x in steps[j].fields)
+        steps[j].notes = [n for n in steps[j].notes if "lookup tables only" not in n or
+                          any(x.kind == "lookup" for x in steps[j].fields)]
+        steps[j].confidence = round(1.0 - unknown / max(steps[j].length, 1), 2) if len(samples) >= 3 else steps[j].confidence
 
 
 def _name(a: Action) -> str:

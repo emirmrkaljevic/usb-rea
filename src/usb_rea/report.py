@@ -12,7 +12,7 @@ def render(proto: Protocol, capture: str = "", sha256: str = "") -> str:
     L += [f"Device: `{ids}`", "",
           "Frame numbers match Wireshark's `frame.number`; open the capture and jump to them to verify each claim.", ""]
     hid_by_cmd = {k: v for h in proto.hid for k, v in h.get("commands", {}).items()}
-    for c in proto.commands:
+    for c in [x for c0 in proto.commands for x in (c0, *c0.steps)]:
         chan = f"{XFER_NAMES.get(c.xfer_type)} EP 0x{c.endpoint:02x}"
         if c.setup:
             chan += f", setup `{c.setup.hex(' ')}`"

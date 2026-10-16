@@ -114,7 +114,8 @@ usb-rea hid capture.pcapng --decode "10ff0d1d000000" --type Output
 - [x] HID report descriptor decoding (`usb-rea hid`), with captured commands mapped to their HID reports
 - [ ] emulated-device CI (dummy_hcd + configfs HID; script in `scripts/gadget_e2e.sh`)
 - [ ] real-hardware case studies
-- [ ] state machines / multi-packet transactions
+- [x] multi-packet transactions (write + apply), including checksums over earlier packets
+- [ ] state machines (request/response handshakes)
 
 ## Legal
 Reverse engineering for interoperability is permitted (EU Directive 2009/24/EC Art. 6, US DMCA §1201(f)). usb-rea only analyzes traffic of devices you own and never redistributes vendor code.
