@@ -1,6 +1,8 @@
 # Changelog
 
 ## Unreleased
+- install docs use PyPI (`pip install usb-rea`, `uvx --from usb-rea usb-rea mcp`) instead of git URLs
+- releases also publish `server.json` to the official MCP Registry (GitHub OIDC, no token)
 
 ## v0.2.1 — 2026-10-16
 - multi-packet transactions: actions that send several packets (e.g. write + apply) are inferred as one command; the driver sends all packets in order

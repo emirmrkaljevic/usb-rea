@@ -8,11 +8,11 @@
 
 Got a USB device that only ships a Windows vendor app (case LCD, RGB controller, mouse, "smart" lamp)? Click around in the vendor app while **usb-rea** captures the USB traffic (usbmon on Linux, USBPcap on Windows), diffs the packets per action, infers the protocol, and writes an open-source Python/libusb driver — with every conclusion linked to the exact packets that prove it.
 
-> Status: alpha (v0.2.0). Validated on synthetic devices, on protocols documented by liquidctl and rivalcfg, and on public Wireshark captures — see [docs/VALIDATION.md](docs/VALIDATION.md). Not yet tested on a physical gadget: your captures are welcome.
+> Status: alpha (v0.2.1, [on PyPI](https://pypi.org/project/usb-rea/)). Validated on synthetic devices, on protocols documented by liquidctl and rivalcfg, and on public Wireshark captures — see [docs/VALIDATION.md](docs/VALIDATION.md). Not yet tested on a physical gadget: your captures are welcome.
 
 ## Try it in 10 seconds (no hardware needed)
 ```bash
-pip install git+https://github.com/emirmrkaljevic/usb-rea
+pip install usb-rea
 usb-rea demo --device fan
 ```
 ```
@@ -59,13 +59,13 @@ usb-rea scaffold lamp.pcapng --labels labels.txt -o lamp_driver.py   # one label
 (Markers, if you have them, are a JSON list of `{"label", "start", "end"}` epoch timestamps.)
 
 ## MCP server
-`pip install "usb-rea[mcp] @ git+https://github.com/emirmrkaljevic/usb-rea"` then add `usb-rea mcp` as a stdio server. Tools: `capture_start`, `capture_stop`, `mark_action`, `diff_actions`, `report`, `scaffold_driver`, `hid_descriptor` (decode a HID report descriptor / report payloads), `wireshark_dissector`, `replay_packet` (refuses unless the human confirmed). Analysis tools accept the same `labels` argument as the CLI for marker-free captures.
+`pip install usb-rea` then add `usb-rea mcp` as a stdio server. Tools: `capture_start`, `capture_stop`, `mark_action`, `diff_actions`, `report`, `scaffold_driver`, `hid_descriptor` (decode a HID report descriptor / report payloads), `wireshark_dissector`, `replay_packet` (refuses unless the human confirmed). Analysis tools accept the same `labels` argument as the CLI for marker-free captures.
 
 With [uv](https://docs.astral.sh/uv/) no install step is needed:
 ```json
-{"mcpServers": {"usb-rea": {"command": "uvx", "args": ["--from", "usb-rea[mcp] @ git+https://github.com/emirmrkaljevic/usb-rea", "usb-rea", "mcp"]}}}
+{"mcpServers": {"usb-rea": {"command": "uvx", "args": ["--from", "usb-rea", "usb-rea", "mcp"]}}}
 ```
-Once usb-rea is on PyPI, `--from "usb-rea[mcp]"` is enough. The server is also listed on [Glama](https://glama.ai/mcp/servers/emirmrkaljevic/usb-rea), which builds it from the repo's `Dockerfile` and checks that it starts and lists its tools.
+For Claude Code: `claude mcp add usb-rea -- uvx --from usb-rea usb-rea mcp`. The server is also listed on the [official MCP Registry](https://registry.modelcontextprotocol.io/v0/servers?search=io.github.emirmrkaljevic/usb-rea) as `io.github.emirmrkaljevic/usb-rea` and on [Glama](https://glama.ai/mcp/servers/emirmrkaljevic/usb-rea), which builds it from the repo's `Dockerfile` and checks that it starts and lists its tools.
 
 ## How it works
 1. `usb-rea capture start` — record traffic (usbmon / USBPcap)

@@ -5,4 +5,4 @@ startCommand:
     type: object
     properties: {}
   commandFunction: |-
-    (config) => ({command: "uvx", args: ["--from", "usb-rea[mcp]", "usb-rea", "mcp"]})
+    (config) => ({command: "uvx", args: ["--from", "usb-rea", "usb-rea", "mcp"]})
