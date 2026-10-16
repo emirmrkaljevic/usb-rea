@@ -1,0 +1,8 @@
+.git
+.venv
+dist
+drafts
+**/__pycache__
+.pytest_cache
+*.pcap
+*.pcapng

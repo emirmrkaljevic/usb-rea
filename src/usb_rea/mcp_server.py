@@ -15,7 +15,11 @@ def build():
     from .scaffold import generate
     from .replay import replay as _replay
 
-    app = FastMCP("usb-rea")
+    from . import __version__
+    try:
+        app = FastMCP("usb-rea", version=__version__)
+    except TypeError:  # mcp 1.x FastMCP has no version argument
+        app = FastMCP("usb-rea")
 
     @app.tool()
     def capture_start(out: str = "capture.pcapng", bus: int = 0) -> str:
