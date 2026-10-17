@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-from .actions import assign, load_markers
+from .actions import assign, drop_background, find_background, load_markers
 from .infer import infer, Protocol
 from .pcap import find_ids, read_transfers
 
@@ -25,6 +25,10 @@ def analyze(capture: str | Path, markers: str | Path | None = None, device: int 
         device = max(counts, key=counts.get) if counts else None
     ts = [t for t in ts if device is None or t.device == device]
     vid, pid = ids.get(device, (None, None))
+    # status polls / keep-alives would otherwise split --labels captures at the wrong place
+    # and land in random actions, so they are set aside before anything else
+    background = find_background(ts)
+    ts = drop_background(ts, background)
     if labels:
         from .actions import segment_by_gaps
         marks = segment_by_gaps(ts, labels)
@@ -33,6 +37,10 @@ def analyze(capture: str | Path, markers: str | Path | None = None, device: int 
     acts = assign(ts, marks)
     proto = infer(acts, vid, pid)
     proto.hid = hid_summary(ts, proto)
+    proto.background = [{"endpoint": b["key"][1], "xfer_type": b["key"][2],
+                         "setup": b["key"][3] or None, "payload": b["data"].hex(" "),
+                         "count": b["count"], "period": b["period"], "frames": b["frames"][:5]}
+                        for b in background]
     return proto
 
 

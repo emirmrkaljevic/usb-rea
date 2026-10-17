@@ -144,6 +144,7 @@ class Protocol:
     commands: list[Command]
     unmatched: list[str] = field(default_factory=list)
     hid: list[dict] = field(default_factory=list)   # filled by pipeline when the capture has HID descriptors
+    background: list[dict] = field(default_factory=list)  # periodic polls/keep-alives set aside by the pipeline
 
     def to_dict(self):
         d = asdict(self)

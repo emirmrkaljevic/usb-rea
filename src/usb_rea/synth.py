@@ -131,8 +131,12 @@ def encode_dial(name: str, values: list[float]) -> bytes:
 
 
 def make_capture(path, actions: list[str] | None = None, transport: str = "bulk",
-                 noise: bool = True, seed: int = 0, device: str = "lamp") -> tuple[Path, Path]:
+                 noise: bool = True, seed: int = 0, device: str = "lamp",
+                 poll: float = 0.0) -> tuple[Path, Path]:
     """Write <path> (pcap) and <path>.actions.json. Returns both paths.
+
+    poll: if > 0, the "vendor app" also sends a status request every `poll` seconds on the
+    command channel, whatever the user is doing (lamp only), like most real control panels.
 
     device: 'lamp' (see module doc), 'fan' (counter + 16-bit BE + RGB + lookup + CRC16),
     or 'dial' (32-bit LE position + 4-bit brightness bitfield + sum8).
@@ -175,6 +179,17 @@ def make_capture(path, actions: list[str] | None = None, transport: str = "bulk"
         t += 1.0
         marks.append({"label": label, "start": start, "end": t - 0.01})
         t += 0.5
+    if poll > 0:
+        status = bytes([0xAA, 0x10, 0x00, 0x00, 0xBA])   # "get status", same shape as a command
+        tp = 1_760_000_000.0 + 0.05
+        while tp < t:
+            at = tp + rnd.uniform(-0.02, 0.02) * poll
+            if transport == "control":
+                w.control_out(at, bytes([0x21, 0x09, 0x00, 0x02, 0, 0, len(status), 0]), status)
+            else:
+                w.out(at, 0x01, status)
+            w.in_(at + 0.01, 0x81, bytes([0x55, 0x10, 0x00]))
+            tp += poll
     path = Path(path)
     w.save(path)
     mpath = path.with_suffix(path.suffix + ".actions.json")

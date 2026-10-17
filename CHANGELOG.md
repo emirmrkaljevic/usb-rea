@@ -1,6 +1,10 @@
 # Changelog
 
 ## Unreleased
+- background traffic: identical host→device messages sent on a steady rhythm independent of the
+  user's clicks (status polls, keep-alives) are detected and set aside before `--labels` splitting
+  and diffing; the report gets a *Background traffic (ignored)* section, JSON/MCP output a
+  `background` list. Previously a polling vendor app made `--labels` split at the wrong places.
 - install docs use PyPI (`pip install usb-rea`, `uvx --from usb-rea usb-rea mcp`) instead of git URLs
 - releases also publish `server.json` to the official MCP Registry (GitHub OIDC, no token)
 

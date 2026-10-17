@@ -38,6 +38,18 @@ def render(proto: Protocol, capture: str = "", sha256: str = "") -> str:
             L += [f"- {r['type']} report, id {rid}, {r['length']} bytes" + (" (vendor-defined)" if r["vendor"] else "")]
             L += [f"  - {f}" for f in r["fields"]]
         L.append("")
+    if proto.background:
+        L += ["## Background traffic (ignored)", "",
+              "Identical host→device messages sent on a steady rhythm, independent of your clicks "
+              "(status polls, keep-alives). They were left out of the analysis.", "",
+              "| Channel | Payload | Count | Every | First frames |", "|---|---|---|---|---|"]
+        for b in proto.background:
+            chan = f"{XFER_NAMES.get(b['xfer_type'])} EP 0x{b['endpoint']:02x}"
+            if b["setup"]:
+                chan += f", setup `{b['setup']}`"
+            L.append(f"| {chan} | `{b['payload']}` | {b['count']} | {b['period']:g} s | "
+                     f"{', '.join(map(str, b['frames']))} |")
+        L.append("")
     if proto.unmatched:
         L += ["## Actions with no host→device data", ""] + [f"- {u}" for u in proto.unmatched] + [""]
     return "\n".join(L)

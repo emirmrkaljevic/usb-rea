@@ -47,6 +47,45 @@ def commands_of(action: Action) -> list[Transfer]:
     return [t for t in action.transfers if t.is_out and t.data]
 
 
+def find_background(transfers: list[Transfer], min_count: int = 4) -> list[dict]:
+    """Host->device messages the vendor app sends on its own (status polls, keep-alives).
+
+    A payload counts as background when the identical message (same channel, same bytes) is sent
+    at least `min_count` times, at a steady rhythm, and mostly on its own: at least half of the
+    copies have no other host->device message close by. That keeps a constant "apply" packet,
+    which always follows a real command, out of this list.
+    Returns one dict per payload: key, data, count, period (s), frames.
+    """
+    outs = sorted((t for t in transfers if t.is_out and t.data), key=lambda t: t.ts)
+    groups: dict[tuple, list[Transfer]] = {}
+    for t in outs:
+        groups.setdefault((t.key(), t.data), []).append(t)
+    found = []
+    for (key, data), ts in groups.items():
+        if len(ts) < min_count:
+            continue
+        iv = sorted(b.ts - a.ts for a, b in zip(ts, ts[1:]))
+        period = iv[len(iv) // 2]
+        if period <= 0:
+            continue
+        # steady rhythm: most intervals within 35% of the median (a missed or late poll is fine)
+        if sum(abs(x - period) <= 0.35 * period for x in iv) < 0.6 * len(iv):
+            continue
+        window = 0.1 * period
+        others = [t.ts for t in outs if (t.key(), t.data) != (key, data)]
+        alone = sum(not any(abs(o - t.ts) <= window for o in others) for t in ts)
+        if alone < 0.5 * len(ts):
+            continue
+        found.append({"key": key, "data": data, "count": len(ts), "period": round(period, 3),
+                      "frames": [t.frame for t in ts]})
+    return found
+
+
+def drop_background(transfers: list[Transfer], background: list[dict]) -> list[Transfer]:
+    bg = {(b["key"], b["data"]) for b in background}
+    return [t for t in transfers if not (t.is_out and t.data and (t.key(), t.data) in bg)]
+
+
 def segment_by_gaps(transfers: list[Transfer], labels: list[str]) -> list[dict]:
     """Build markers without timestamps: split host->device traffic at the largest pauses.
 

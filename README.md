@@ -58,6 +58,13 @@ usb-rea scaffold lamp.pcapng --labels labels.txt -o lamp_driver.py   # one label
 ```
 (Markers, if you have them, are a JSON list of `{"label", "start", "end"}` epoch timestamps.)
 
+Most vendor apps also poll the device on their own (a "get status" every few hundred ms, keep-alives).
+usb-rea spots identical host→device messages sent on a steady rhythm, away from your clicks, and sets
+them aside before splitting and diffing; the report lists them under *Background traffic (ignored)*
+with their period and frame numbers. A constant "apply" packet that always follows a real command is
+not treated as background. Polls whose bytes change every time (e.g. with a sequence number) are not
+detected yet.
+
 ## MCP server
 `pip install usb-rea` then add `usb-rea mcp` as a stdio server. Tools: `capture_start`, `capture_stop`, `mark_action`, `diff_actions`, `report`, `scaffold_driver`, `hid_descriptor` (decode a HID report descriptor / report payloads), `wireshark_dissector`, `replay_packet` (refuses unless the human confirmed). Analysis tools accept the same `labels` argument as the CLI for marker-free captures.
 
@@ -115,6 +122,7 @@ usb-rea hid capture.pcapng --decode "10ff0d1d000000" --type Output
 - [ ] emulated-device CI (dummy_hcd + configfs HID; script in `scripts/gadget_e2e.sh`)
 - [ ] real-hardware case studies
 - [x] multi-packet transactions (write + apply), including checksums over earlier packets
+- [x] background traffic: periodic status polls / keep-alives are detected and ignored
 - [ ] state machines (request/response handshakes)
 
 ## Legal
