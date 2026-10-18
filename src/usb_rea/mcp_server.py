@@ -75,6 +75,11 @@ def build():
     ) -> str:
         """Diff packets per labelled action and infer the protocol (JSON: byte roles + evidence frames).
 
+        The JSON also has `background` (periodic polls set aside) and `responses`: device replies paired
+        with the query they answer (command, background poll or GET_REPORT), with byte roles
+        (const, echo of a query byte, value fitted to the labels, counter, checksum, or reading with
+        its observed min/max) and query/reply frame numbers.
+
         Read-only analysis: does not write files or talk to hardware. Requires either markers from
         mark_action or `labels` for a finished capture with pauses between clicks. Prefer report
         when the human wants a Markdown evidence write-up; prefer scaffold_driver /
@@ -91,6 +96,9 @@ def build():
     ) -> str:
         """Generate a Markdown evidence report: every claim links to frame numbers in the capture.
 
+        Includes a 'Device responses' section when the device answers queries (status polls,
+        command ACKs, GET_REPORT), saying which reply bytes could not be explained.
+
         Read-only: returns Markdown text (does not write a file). Same inputs as diff_actions.
         Use after capture_stop (or on an existing pcap). Choose this over diff_actions when the
         human should read the protocol; choose scaffold_driver when they need a pyusb driver.
@@ -105,6 +113,9 @@ def build():
         labels: Annotated[str | None, Field(description="Marker-free mode: ';'-separated labels in click order, or a text file path (one label per line)")] = None,
     ) -> str:
         """Generate a standalone Python/pyusb driver source for the inferred protocol.
+
+        One set_<command>() per command; when the device replies, also query_<name>() methods that
+        send the command/poll (or GET_REPORT), read the reply and return it decoded as a dict.
 
         Read-only analysis that returns driver source as text (does not write a file or open the
         device). Same capture/markers/labels inputs as report. Prefer wireshark_dissector when the

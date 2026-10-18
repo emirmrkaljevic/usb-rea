@@ -59,6 +59,7 @@ class Device:
         if self.dev is None:
             raise RuntimeError(f"device {{VID:04x}}:{{PID:04x}} not found")
         self.seq = 0
+        self.sent = []
         for cfg in self.dev:
             for intf in cfg:
                 if self.dev.is_kernel_driver_active(intf.bInterfaceNumber):
@@ -68,18 +69,77 @@ class Device:
                         pass
 
     def _send(self, spec, *values, prev=None):
+        if prev is None:
+            self.sent = []
         if "then" in spec:  # multi-packet transaction
             first = {{k: v for k, v in spec.items() if k != "then"}}
-            sent = []
-            return [self._send(step, *values, prev=sent) for step in [first, *spec["then"]]]
+            return [self._send(step, *values, prev=self.sent) for step in [first, *spec["then"]]]
         self.seq += 1
-        data = encode(spec, values, self.seq, prev)
-        if prev is not None:
-            prev.append(data)
+        data = encode(spec, values, self.seq, self.sent)
+        self.sent.append(data)
         if spec["setup"]:
             bm, req, wv, wi = spec["setup"]
             return self.dev.ctrl_transfer(bm, req, wv, wi, data)
         return self.dev.write(spec["endpoint"], data)
+
+    def _query(self, spec, reply, *values, timeout=1000):
+        """Send a query (or command), read the device's reply and decode it with parse()."""
+        self.sent = []
+        if spec is not None:
+            self._send(spec, *values)
+        if reply["setup"]:
+            bm, req, wv, wi, n = reply["setup"]
+            data = self.dev.ctrl_transfer(bm, req, wv, wi, n, timeout)
+        else:
+            data = self.dev.read(reply["endpoint"], max(64, reply["length"]), timeout)
+        sent = self.sent[reply["after"]] if len(self.sent) > reply["after"] else b""
+        return parse(reply, data, sent)
+'''
+
+PARSER = '''
+# ---- reply decoder ----
+def _get(b, off, width, endian):
+    return int.from_bytes(b[off:off + width], "little" if endian == "le" else "big")
+
+
+def parse(spec, data, sent=b""):
+    """Decode a device reply. 'ok' is False when a constant, echoed or checksum byte does not match."""
+    data = bytes(data)
+    out = {"raw": data.hex(" "), "ok": True}
+    if len(data) < spec["length"]:
+        out.update(ok=False, error=f"expected {spec['length']} bytes, got {len(data)}")
+        return out
+    for f in spec["fields"]:
+        kind, off, w, end = f["kind"], f["offset"], f["width"], f["endian"]
+        raw = _get(data, off, w, end)
+        if kind == "const":
+            out["ok"] &= raw == f["const"]
+        elif kind == "echo":
+            if "const" in f:
+                out["ok"] &= raw == f["const"]
+            elif len(sent) > f["echo"]:
+                out["ok"] &= raw == sent[f["echo"]]
+        elif kind == "value":
+            out[f["name"]] = (raw - f["bias"]) / f["scale"]
+        elif kind == "bitfield":
+            bits = (int.from_bytes(data[off:off + w], "little") >> f["bit_offset"]) & ((1 << f["bit_width"]) - 1)
+            out[f["name"]] = (bits - f["bias"]) / f["scale"]
+        elif kind in ("counter", "reading"):
+            out[f["name"]] = raw
+        elif kind == "checksum":
+            a, z = f["covers"]
+            good = raw == compute(f["algo"], data[a:z])
+            out["checksum_ok"] = out.get("checksum_ok", True) and good
+            out["ok"] &= good
+    return out
+
+'''
+
+QUERY = '''
+    def {name}({sig}):
+        """{doc}
+        """
+        return self._query({call})
 '''
 
 
@@ -105,6 +165,57 @@ def generate(proto: Protocol) -> str:
                   for f in c.fields if f.kind in ("value", "bitfield", "lookup", "counter", "checksum")]
         return dict(template=c.template().hex(), endpoint=c.endpoint, setup=setup, fields=fields)
 
+    def reply_of(r, prefix):
+        setup = None
+        if r.source == "control read" and r.query_setup:
+            q = r.query_setup
+            setup = (q[0], q[1], q[2] | q[3] << 8, q[4] | q[5] << 8, q[6] | q[7] << 8)
+        fields = []
+        for f in r.fields:
+            if f.kind in ("value", "bitfield"):
+                name = prefix + (f"_{f.index}" if f.index else "")
+            else:
+                name = f"{f.kind}_{f.offset}"
+            d = dict(kind=f.kind, name=name, offset=f.offset, width=f.width, endian=f.endian,
+                     const=f.const, echo=f.echo, scale=f.scale, bias=f.bias, algo=f.algo,
+                     covers=f.covers, bit_offset=f.bit_offset, bit_width=f.bit_width)
+            fields.append({k: v for k, v in d.items() if v is not None})
+        return dict(length=r.length, endpoint=r.endpoint, setup=setup, after=r.packet, fields=fields)
+
+    queries = []
+    names = {_ident(c.name) for c in proto.commands}
+    for r in proto.responses:
+        ident = _ident(r.query)
+        const = ident.upper() + "_REPLY"
+        specs.append(f"{const} = {reply_of(r, ident)!r}\n")
+        lines = "; ".join(f"byte {f.offset}: {f.describe()}" for f in r.fields if f.kind != "const")
+        frames = ", ".join(str(s[3]) for s in r.samples[:8])
+        doc = f"reply {r.length} bytes; evidence frames {frames}).\n\n        {lines}"
+        if r.source == "command":
+            c = next(c for c in proto.commands if c.name == r.query)
+            args = ", ".join(f"v{i}" for i in range(c.arity))
+            sig = f"self, {args}" if args else "self"
+            call = f"{ident.upper()}, {const}" + (f", {args}" if args else "")
+            queries.append(QUERY.format(name=f"query_{ident}", sig=sig, call=call,
+                                        doc=f"Send {r.query} and decode the device's reply ({doc}"))
+            continue
+        qname = f"query_{ident}" if ident not in names else f"query_{ident}_reply"
+        if r.request is not None:
+            q = r.request
+            if any(f.kind == "unknown" for f in q.fields):
+                sent = "the first captured copy verbatim (its varying bytes could not be explained)"
+                qspec = dict(template=q.samples[0][1].replace(" ", ""), endpoint=q.endpoint,
+                             setup=spec_of(q)["setup"], fields=[])
+            else:
+                sent = f"`{r.query_payload}`"
+                qspec = spec_of(q)
+            specs.append(f"{ident.upper()} = {qspec!r}\n")
+            how, qarg = f"Send background poll {sent}", ident.upper()
+        else:
+            how, qarg = f"Read {r.query} (control IN, setup {r.query_setup.hex(' ')})", "None"
+        queries.append(QUERY.format(name=qname, sig="self", call=f"{qarg}, {const}",
+                                    doc=f"{how} and decode the reply ({doc}"))
+
     for c in proto.commands:
         const = _ident(c.name).upper()
         spec = spec_of(c)
@@ -123,14 +234,17 @@ def generate(proto: Protocol) -> str:
         """
         return self._send({const}{", " + args if args else ""})
 ''')
+    out += queries
     head, cls = out[0].split("class Device:", 1)
-    out[0] = head + "# ---- message specs (from inference) ----\n" + "".join(specs) + "\n\nclass Device:" + cls
+    parser = PARSER if proto.responses else ""
+    out[0] = head + parser + "# ---- message specs (from inference) ----\n" + "".join(specs) + "\n\nclass Device:" + cls
     out.append('''
 
 if __name__ == "__main__":
     import sys
     d = Device()
     name, *args = sys.argv[1:]
-    print(getattr(d, "set_" + name)(*map(float, args)))
+    fn = getattr(d, name) if name.startswith("query_") else getattr(d, "set_" + name)
+    print(fn(*map(float, args)))
 ''')
     return "".join(out)

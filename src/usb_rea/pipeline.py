@@ -28,6 +28,7 @@ def analyze(capture: str | Path, markers: str | Path | None = None, device: int 
     # status polls / keep-alives would otherwise split --labels captures at the wrong place
     # and land in random actions, so they are set aside before anything else
     background = find_background(ts)
+    everything = ts
     ts = drop_background(ts, background)
     if labels:
         from .actions import segment_by_gaps
@@ -41,6 +42,8 @@ def analyze(capture: str | Path, markers: str | Path | None = None, device: int 
                          "setup": b["key"][3] or None, "payload": pattern(b["data"], b["mask"]),
                          "count": b["count"], "period": b["period"], "frames": b["frames"][:5]}
                         for b in background]
+    from .responses import analyze_responses
+    proto.responses = analyze_responses(everything, proto.commands, background)
     return proto
 
 

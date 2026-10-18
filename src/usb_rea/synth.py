@@ -2,7 +2,9 @@
 
 Devices (VID 0x1234 / PID 0xABCD):
   lamp — bulk/HID: AA <cmd> <arg> 00 <sum8>; brightness/power/hue (8-bit)
-  fan  — 5A <seq> <cmd> <args> pad + CRC16/MODBUS; 16-bit BE RPM, RGB, lookup
+  fan  — 5A <seq> <cmd> <args> pad + CRC16/MODBUS; 16-bit BE RPM, RGB, lookup.
+         Replies A5 <cmd> <seq> <arg u16 LE> <sum8>; with poll > 0 it is asked for its status and
+         answers A5 40 <current RPM u16 LE> <temperature °C> 00 <sum8>
   dial — A5 <cmd> <args> <sum8>; 32-bit LE position + 4-bit level bitfield
 """
 from __future__ import annotations
@@ -108,6 +110,26 @@ def encode_fan(name: str, values: list[float], seq: int) -> bytes:
     return body + compute("crc16_modbus", body).to_bytes(2, "little")
 
 
+def fan_status_query() -> bytes:
+    """Fan "get status": 5A 00 40, pad, CRC16/MODBUS (no sequence number)."""
+    from .checksums import compute
+    body = bytes([0x5A, 0x00, 0x40, 0, 0, 0])
+    return body + compute("crc16_modbus", body).to_bytes(2, "little")
+
+
+def fan_reply(msg: bytes, values: list[float]) -> bytes:
+    """Fan ACK: A5 <cmd> <seq echo> <arg u16 LE> <sum8>; arg = set RPM for 'fan', mode byte for 'mode'."""
+    cmd = msg[2]
+    arg = int(values[0]) if cmd == 0x10 else msg[3] if cmd == 0x30 else 0
+    body = bytes([0xA5, cmd, msg[1]]) + arg.to_bytes(2, "little")
+    return body + bytes([sum(body) & 0xFF])
+
+
+def fan_status(rpm: int, temp: int) -> bytes:
+    body = bytes([0xA5, 0x40]) + rpm.to_bytes(2, "little") + bytes([temp, 0x00])
+    return body + bytes([sum(body) & 0xFF])
+
+
 
 DIAL_ACTIONS = [
     # values chosen so each of the 4 LE bytes varies (required to claim u32 over four u8s)
@@ -136,8 +158,11 @@ def make_capture(path, actions: list[str] | None = None, transport: str = "bulk"
     """Write <path> (pcap) and <path>.actions.json. Returns both paths.
 
     poll: if > 0, the "vendor app" also sends a status request every `poll` seconds on the
-    command channel, whatever the user is doing (lamp only), like most real control panels.
-    poll_seq: the status request carries a sequence byte (and so a changing checksum).
+    command channel, whatever the user is doing, like most real control panels. The lamp answers
+    55 10 00; the fan answers with its current RPM (follows the last 'fan N' setting, +-12 jitter)
+    and a slowly drifting temperature, so tests have ground truth for decoded replies.
+    poll_seq: the lamp's status request carries a sequence byte (and so a changing checksum),
+    which the reply echoes.
 
     device: 'lamp' (see module doc), 'fan' (counter + 16-bit BE + RGB + lookup + CRC16),
     or 'dial' (32-bit LE position + 4-bit brightness bitfield + sum8).
@@ -158,6 +183,7 @@ def make_capture(path, actions: list[str] | None = None, transport: str = "bulk"
     t += 0.5
     marks = []
     seq = 0x40
+    targets = [(0.0, 1000)]   # fan: (time, set RPM), for the status replies
     for label in actions:
         start = t
         if noise:
@@ -176,25 +202,40 @@ def make_capture(path, actions: list[str] | None = None, transport: str = "bulk"
             w.control_out(t + 0.3, bytes([0x21, 0x09, 0x00, 0x02, 0, 0, len(msg), 0]), msg)
         else:
             w.out(t + 0.3, 0x01, msg)
-        w.in_(t + 0.31, 0x81, bytes([0x55, msg[1], 0x00]))
+        if device == "fan":
+            w.in_(t + 0.31, 0x81, fan_reply(msg, split_values(label)[1]))
+            if msg[2] == 0x10:
+                targets.append((t + 0.3, int(split_values(label)[1][0])))
+        else:
+            w.in_(t + 0.31, 0x81, bytes([0x55, msg[1], 0x00]))
         t += 1.0
         marks.append({"label": label, "start": start, "end": t - 0.01})
         t += 0.5
     if poll > 0:
         status = bytes([0xAA, 0x10, 0x00, 0x00, 0xBA])   # "get status", same shape as a command
+        reply = bytes([0x55, 0x10, 0x00])
+        if device == "fan":
+            status = fan_status_query()
+            sensor = random.Random(seed + 1)
+            temp = 38
         tp = 1_760_000_000.0 + 0.05
         n = 0
         while tp < t:
-            if poll_seq:
+            if poll_seq and device != "fan":
                 body = bytes([0xAA, 0x10, n & 0xFF, 0x00])
                 status = body + bytes([sum(body) & 0xFF])
+                reply = bytes([0x55, 0x10, n & 0xFF])
                 n += 1
             at = tp + rnd.uniform(-0.02, 0.02) * poll
+            if device == "fan":
+                target = [r for ts_, r in targets if ts_ <= at][-1]
+                temp = min(45, max(35, temp + sensor.choice((-1, 0, 0, 1))))
+                reply = fan_status(target + sensor.randint(-12, 12), temp)
             if transport == "control":
                 w.control_out(at, bytes([0x21, 0x09, 0x00, 0x02, 0, 0, len(status), 0]), status)
             else:
                 w.out(at, 0x01, status)
-            w.in_(at + 0.01, 0x81, bytes([0x55, 0x10, 0x00]))
+            w.in_(at + 0.01, 0x81, reply)
             tp += poll
     path = Path(path)
     w.save(path)

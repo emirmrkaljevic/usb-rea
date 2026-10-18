@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+- device responses: each host query (command, background poll, class/vendor control read such as
+  GET_REPORT) is paired with the device→host transfer that answers it, and the replies are decoded:
+  constants, echoed query bytes (command id, sequence number), counters, checksums, values fitted to
+  the action labels (same leave-one-out guard as commands), and *readings* with their observed range
+  for anything that varies on its own. Report section *Device responses* with query/reply frames,
+  `responses` in JSON/MCP output, and `query_<name>()` methods in the generated driver that send the
+  query and return the decoded reply
+- pairing survives a poll sent between a command and its reply (replies go to the query whose delay
+  matches its group's typical delay)
+- synthetic fan: replies `a5 <cmd> <seq> <arg u16le> <sum8>` and, with `poll=`, a status reply with
+  current RPM and temperature, for ground-truth tests
+
 ## v0.3.0 — 2026-10-18
 Vendor apps that poll the device no longer confuse the analysis.
 

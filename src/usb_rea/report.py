@@ -51,6 +51,57 @@ def render(proto: Protocol, capture: str = "", sha256: str = "") -> str:
             L.append(f"| {chan} | `{b['payload']}` | {b['count']} | {b['period']:g} s | "
                      f"{', '.join(map(str, b['frames']))} |")
         L.append("")
+    if proto.responses:
+        L += _responses(proto)
     if proto.unmatched:
         L += ["## Actions with no host→device data", ""] + [f"- {u}" for u in proto.unmatched] + [""]
     return "\n".join(L)
+
+
+def _chan(endpoint: int, xfer_type: int, setup: bytes | None = None) -> str:
+    c = f"{XFER_NAMES.get(xfer_type)} EP 0x{endpoint:02x}"
+    return c + (f", setup `{setup.hex(' ')}`" if setup else "")
+
+
+def _responses(proto: Protocol) -> list[str]:
+    L = ["## Device responses", "",
+         "Device→host data that answers a host query: the reply to a command, to a background poll, or "
+         "to a control read such as GET_REPORT. Each reply is the IN transfer that follows its query "
+         "(after the typical delay for that query); `= query byte N` means the reply repeats that byte "
+         "of the query, and a *reading* varies on its own: only its observed range is claimed.", ""]
+    for r in proto.responses:
+        what = {"command": "command", "background": "background poll", "control read": "control read"}[r.source]
+        L += [f"### Reply to `{r.query}` ({what})", ""]
+        if r.query_payload:
+            L.append(f"- Query: {_chan(r.query_endpoint, r.query_xfer_type, r.query_setup)}, `{r.query_payload}`"
+                     + (f" (packet {r.packet + 1} of the transaction)" if r.packet else ""))
+        else:
+            L.append(f"- Query: {_chan(r.query_endpoint, r.query_xfer_type, r.query_setup)}")
+        L += [f"- Reply: {_chan(r.endpoint, r.xfer_type)}, {r.length} bytes, typically {r.latency_ms:g} ms after the query",
+              f"- Answered: {r.answered} of {r.queries} queries",
+              f"- Explained: {r.explained} of {r.length} bytes"
+              + ("" if r.explained == r.length else " (the rest are readings)"),
+              "", "| Byte | Role | Encoding |", "|---|---|---|"]
+        fields = list(r.fields)
+        while fields:
+            f = fields.pop(0)
+            run = [f]
+            while f.kind == "reading" and f.width == 1 and fields and fields[0].kind == "reading" \
+                    and fields[0].width == 1 and fields[0].offset == run[-1].offset + 1:
+                run.append(fields.pop(0))
+            if len(run) >= 4:  # a block of independent byte readings: one row
+                lo, hi = min(x.limits[0] for x in run), max(x.limits[1] for x in run)
+                L.append(f"| {f.offset}-{run[-1].offset} | reading | `u8 readings, seen {lo}..{hi}` |")
+                continue
+            for f in run:
+                span = f"{f.offset}-{f.offset + f.width - 1}" if f.width > 1 else f"{f.offset}"
+                L.append(f"| {span} | {f.kind} | `{f.describe()}` |")
+        shown = r.samples[:8]
+        L += ["", "Evidence" + (f" (first {len(shown)} of {r.answered}):" if r.answered > len(shown) else ":"), "",
+              "| Action | Query frame | Reply | Reply frame |", "|---|---|---|---|"]
+        for label, qf, hx, rf in shown:
+            L.append(f"| {label or '-'} | {qf} | `{hx}` | {rf} |")
+        for n in r.notes:
+            L.append(f"\n> Note: {n}")
+        L.append("")
+    return L

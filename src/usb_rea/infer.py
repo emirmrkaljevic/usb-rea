@@ -2,7 +2,8 @@
 
 Byte roles: const, command, value (linear, 8/16/32-bit LE/BE), bitfield (packed bits),
 lookup (value->byte table), counter (increments per message), checksum (sum/xor/CRC8/CRC16),
-unknown.
+unknown. Device replies (see responses.py) add echo (copy of a query byte) and reading
+(varies on its own, no label to explain it).
 """
 from __future__ import annotations
 from collections import Counter, defaultdict
@@ -16,7 +17,7 @@ from .model import Action, Transfer
 @dataclass
 class Field:
     offset: int
-    kind: str                 # const | command | value | bitfield | lookup | counter | checksum | unknown
+    kind: str                 # const | command | value | bitfield | lookup | counter | checksum | echo | reading | unknown
     width: int = 1
     endian: str = "le"
     const: int | None = None
@@ -30,6 +31,8 @@ class Field:
     source: int | None = None  # checksum over an earlier packet of the same transaction
     bit_offset: int | None = None   # LSB of packed field within the width bytes
     bit_width: int | None = None
+    echo: int | None = None         # reply byte that repeats this byte of the query
+    limits: tuple[int, int] | None = None  # observed min/max of a reading
     observed: list = field(default_factory=list)
     frames: list[int] = field(default_factory=list)
 
@@ -53,6 +56,10 @@ class Field:
             return "lookup " + ", ".join(f"{k:g}→0x{v:02x}" for k, v in sorted(self.table.items()))
         if self.kind == "counter":
             return f"counter (+{self.step} per message)"
+        if self.kind == "echo":
+            return f"= query byte {self.echo}" + (f" (0x{self.const:02x})" if self.const is not None else "")
+        if self.kind == "reading":
+            return f"{w or 'u8 '}reading, seen {self.limits[0]}..{self.limits[1]}"
         if self.kind == "checksum":
             src = f"packet{self.source + 1}" if self.source is not None else "bytes"
             return f"{w}{self.algo}({src}[{self.covers[0]}:{self.covers[1]}])"
@@ -145,12 +152,15 @@ class Protocol:
     unmatched: list[str] = field(default_factory=list)
     hid: list[dict] = field(default_factory=list)   # filled by pipeline when the capture has HID descriptors
     background: list[dict] = field(default_factory=list)  # periodic polls/keep-alives set aside by the pipeline
+    responses: list = field(default_factory=list)  # decoded device replies (responses.Response)
 
     def to_dict(self):
         d = asdict(self)
-        for c in d["commands"]:
+        for c in d["commands"] + [r["request"] for r in d["responses"] if r["request"]]:
             for x in [c, *c["steps"]]:
                 x["setup"] = x["setup"].hex() if x["setup"] else None
+        for r in d["responses"]:
+            r["query_setup"] = r["query_setup"].hex() if r["query_setup"] else None
         return d
 
 
@@ -331,7 +341,7 @@ def _bit_run(cols: list[int], nbits: int = 8) -> tuple[int, int, int] | None:
     return lo, bw, mask
 
 
-def _infer_command(name, items, length, notes, counters) -> Command:
+def _infer_command(name, items, length, notes, counters, lookups: bool = True, preset: dict | None = None) -> Command:
     t0 = items[0][1]
     frames = [t.frame for _, t in items]
     datas = [t.data for _, t in items]
@@ -347,6 +357,9 @@ def _infer_command(name, items, length, notes, counters) -> Command:
     for off, (step, fr) in counters.items():
         if off < length and fields[off].kind == "unknown":
             fields[off].kind, fields[off].step, fields[off].frames = "counter", step, fr
+    for off, f in (preset or {}).items():
+        if fields[off].kind == "unknown":
+            fields[off] = f
 
     def free(a, w=1):
         return a + w <= length and all(fields[i].kind == "unknown" for i in range(a, a + w))
@@ -409,7 +422,7 @@ def _infer_command(name, items, length, notes, counters) -> Command:
                 fit = _fit_linear(xs, [d[off] for d in datas])
                 if fit:
                     claim(Field(off, "value", index=j, scale=fit[0], bias=fit[1], frames=frames))
-    for j in range(arity):
+    for j in range(arity if lookups else 0):
         xs = [v[j] if j < len(v) else None for v in vals]
         if any(x is None for x in xs) or len(set(xs)) < 2:
             continue

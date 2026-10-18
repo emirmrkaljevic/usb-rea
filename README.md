@@ -22,8 +22,12 @@ usb-rea demo --device fan
 fan    100%  0x5a | counter (+1 per message) | 0x10 | u16be round(value * 1 + 0) | 0x00 | u16le crc16_modbus(bytes[0:6])
 color  100%  0x5a | counter (+1 per message) | 0x20 | round(value * 1 + 0) | round(value[1] * 1 + 0) | round(value[2] * 1 + 0) | u16le crc16_modbus(bytes[0:6])
 mode   100%  0x5a | counter (+1 per message) | 0x30 | lookup 1→0x11, 2→0x22, 3→0x47 | 0x00 | 0x00 | u16le crc16_modbus(bytes[0:6])
+
+device replies:
+fan    6/6  0xa5 | = query byte 2 (0x10) | = query byte 1 | u16le round(value * 1 + 0) | sum8(bytes[0:5])
+poll 1 4/7  0xa5 | = query byte 2 (0x40) | u16le reading, seen 794..4012 | u8 reading, seen 35..38 | 0x00 | sum8(bytes[0:6])
 ```
-It writes a synthetic capture of a fan controller, recovers the protocol, and writes `report.md` (every claim linked to Wireshark frame numbers) and a working pyusb driver that encodes values it never saw.
+It writes a synthetic capture of a fan controller (its vendor app also polls the fan's status), recovers the protocol and the replies, and writes `report.md` (every claim linked to Wireshark frame numbers) and a working pyusb driver that encodes values it never saw and decodes what the fan answers.
 
 `--device lamp` (default) is a simple 8-bit device; `--device dial` shows 32-bit values and packed bitfields:
 ```
@@ -40,6 +44,7 @@ level        100%  0xa5 | 0x02 | bits[0:4] = round(value * 1 + 0) | 0x00 | sum8(
 | lookup tables (non-linear choices) | DPI 250→`08`, 500→`07` … |
 | rolling counters | sequence byte +1 per message |
 | checksums | sum8, xor8, neg/inv sum8, sum16, CRC8, CRC8/MAXIM, CRC16 CCITT-FALSE/XMODEM/MODBUS/KERMIT |
+| device replies: echoed query bytes, values fitted to labels, readings | status poll → `a5 40 2a 07 26 00 3c` = RPM `u16le` reading, temperature `u8` reading, sum8 |
 
 Linear fits must survive leave-one-out cross-checks; otherwise usb-rea falls back to an honest lookup table and says so.
 
@@ -69,6 +74,18 @@ not treated as background. Polls that carry a sequence number are caught too: sa
 that differ only in a byte counting up by one (plus a trailing checksum that changes with it) show up
 as e.g. `aa 10 ?? 00 ??`. Those need at least 8 copies, so a user stepping a value by one is not
 mistaken for a poll.
+
+### Device responses
+Devices answer too: an ACK after each command, a status reply to every poll (RPM, temperature,
+firmware version), or the data of a GET_REPORT. usb-rea pairs each query with the IN transfer that
+follows it (by endpoint and typical delay, so a poll sent in the middle of a click doesn't steal the
+click's reply) and decodes the replies with the same machinery: constants, bytes that echo the query
+(command id, sequence number), counters, checksums, and values fitted to your labels (`fan 1200` →
+`u16le` in the reply). Anything else that varies is reported as a *reading* with its observed range,
+and the report says that its meaning is unknown. A 16-bit reading is only claimed when one byte
+order changes smoothly and the other jumps. The generated driver gets `query_<name>()` methods that
+send the query, read the reply and return a dict (`{"reading_2": 1834, "checksum_ok": True, …}`).
+Try it with `usb-rea demo --device fan` or on a capture with polls.
 
 ## MCP server
 `pip install usb-rea` then add `usb-rea mcp` as a stdio server. Tools: `capture_start`, `capture_stop`, `mark_action`, `diff_actions`, `report`, `scaffold_driver`, `hid_descriptor` (decode a HID report descriptor / report payloads), `wireshark_dissector`, `replay_packet` (refuses unless the human confirmed). Analysis tools accept the same `labels` argument as the CLI for marker-free captures.
@@ -128,7 +145,8 @@ usb-rea hid capture.pcapng --decode "10ff0d1d000000" --type Output
 - [ ] real-hardware case studies
 - [x] multi-packet transactions (write + apply), including checksums over earlier packets
 - [x] background traffic: periodic status polls / keep-alives are detected and ignored
-- [ ] state machines (request/response handshakes)
+- [x] device responses: replies to commands, background polls and GET_REPORT decoded, `query_*()` driver methods
+- [ ] state machines (multi-step handshakes)
 
 ## Legal
 Reverse engineering for interoperability is permitted (EU Directive 2009/24/EC Art. 6, US DMCA §1201(f)). usb-rea only analyzes traffic of devices you own and never redistributes vendor code.

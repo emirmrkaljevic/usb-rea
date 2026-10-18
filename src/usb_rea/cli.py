@@ -161,7 +161,8 @@ def _demo(outdir: Path, device: str = "lamp") -> int:
     from .report import render
     from .scaffold import generate
     outdir.mkdir(parents=True, exist_ok=True)
-    cap, _ = make_capture(outdir / f"{device}.pcap", device=device)
+    # the fan's vendor app also polls its status, so the demo shows decoded replies too
+    cap, _ = make_capture(outdir / f"{device}.pcap", device=device, poll=0.5 if device == "fan" else 0.0)
     proto = analyze(cap)
     (outdir / "report.md").write_text(render(proto, str(cap), sha256(cap)))
     (outdir / f"{device}_driver.py").write_text(generate(proto))
@@ -172,6 +173,10 @@ def _demo(outdir: Path, device: str = "lamp") -> int:
           f"device {proto.vid:04x}:{proto.pid:04x}\n")
     for c in proto.commands:
         print(f"{c.name:12s} {c.confidence:4.0%}  " + " | ".join(f.describe() for f in c.fields))
+    if proto.responses:
+        print("\ndevice replies:")
+        for r in proto.responses:
+            print(f"{r.query:12s} {r.explained}/{r.length}  " + " | ".join(f.describe() for f in r.fields))
     print(f"\nwrote {outdir}/report.md, {outdir}/{device}_driver.py and the Wireshark dissector {outdir}/{device}.lua")
     return 0
 
