@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## v0.3.0 — 2026-10-18
+Vendor apps that poll the device no longer confuse the analysis.
+
 - background traffic: identical host→device messages sent on a steady rhythm independent of the
   user's clicks (status polls, keep-alives) are detected and set aside before `--labels` splitting
   and diffing; the report gets a *Background traffic (ignored)* section, JSON/MCP output a
