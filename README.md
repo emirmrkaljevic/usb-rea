@@ -65,8 +65,10 @@ Most vendor apps also poll the device on their own (a "get status" every few hun
 usb-rea spots identical host→device messages sent on a steady rhythm, away from your clicks, and sets
 them aside before splitting and diffing; the report lists them under *Background traffic (ignored)*
 with their period and frame numbers. A constant "apply" packet that always follows a real command is
-not treated as background. Polls whose bytes change every time (e.g. with a sequence number) are not
-detected yet.
+not treated as background. Polls that carry a sequence number are caught too: same-shape messages
+that differ only in a byte counting up by one (plus a trailing checksum that changes with it) show up
+as e.g. `aa 10 ?? 00 ??`. Those need at least 8 copies, so a user stepping a value by one is not
+mistaken for a poll.
 
 ## MCP server
 `pip install usb-rea` then add `usb-rea mcp` as a stdio server. Tools: `capture_start`, `capture_stop`, `mark_action`, `diff_actions`, `report`, `scaffold_driver`, `hid_descriptor` (decode a HID report descriptor / report payloads), `wireshark_dissector`, `replay_packet` (refuses unless the human confirmed). Analysis tools accept the same `labels` argument as the CLI for marker-free captures.

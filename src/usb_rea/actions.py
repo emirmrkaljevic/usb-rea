@@ -47,6 +47,49 @@ def commands_of(action: Action) -> list[Transfer]:
     return [t for t in action.transfers if t.is_out and t.data]
 
 
+def _periodic(ts: list[Transfer], outs: list[Transfer]) -> float | None:
+    """Median period if `ts` is sent at a steady rhythm and mostly on its own, else None."""
+    iv = sorted(b.ts - a.ts for a, b in zip(ts, ts[1:]))
+    period = iv[len(iv) // 2]
+    if period <= 0:
+        return None
+    # steady rhythm: most intervals within 35% of the median (a missed or late poll is fine)
+    if sum(abs(x - period) <= 0.35 * period for x in iv) < 0.6 * len(iv):
+        return None
+    window = 0.1 * period
+    mine = {id(t) for t in ts}
+    others = [t.ts for t in outs if id(t) not in mine]
+    alone = sum(not any(abs(o - t.ts) <= window for o in others) for t in ts)
+    return period if alone >= 0.5 * len(ts) else None
+
+
+def _counter_candidates(outs: list[Transfer], skip: set, min_count: int) -> list[tuple]:
+    """Groups of same-shape messages that differ only in a +1 sequence byte (and maybe a trailing
+    checksum byte that changes with it). Returns (key, template, masked positions, transfers)."""
+    shapes: dict[tuple, list[Transfer]] = {}
+    for t in outs:
+        if id(t) not in skip and len(t.data) <= 64:
+            shapes.setdefault((t.key(), len(t.data)), []).append(t)
+    cands = []
+    for (key, n), ts in shapes.items():
+        if len(ts) < min_count:
+            continue
+        for j in range(n):
+            for mask in ({j}, {j, n - 1}) if j != n - 1 else ({j},):
+                groups: dict[bytes, list[Transfer]] = {}
+                for t in ts:
+                    groups.setdefault(bytes(0 if i in mask else b for i, b in enumerate(t.data)), []).append(t)
+                for tpl, g in groups.items():
+                    if len(g) < min_count:
+                        continue
+                    steps = [(b.data[j] - a.data[j]) % 256 for a, b in zip(g, g[1:])]
+                    if sum(x == 1 for x in steps) >= 0.8 * len(steps):
+                        cands.append((key, tpl, tuple(sorted(mask)), g))
+    # prefer the biggest groups, then the fewest masked bytes
+    cands.sort(key=lambda c: (-len(c[3]), len(c[2])))
+    return cands
+
+
 def find_background(transfers: list[Transfer], min_count: int = 4) -> list[dict]:
     """Host->device messages the vendor app sends on its own (status polls, keep-alives).
 
@@ -54,36 +97,46 @@ def find_background(transfers: list[Transfer], min_count: int = 4) -> list[dict]
     at least `min_count` times, at a steady rhythm, and mostly on its own: at least half of the
     copies have no other host->device message close by. That keeps a constant "apply" packet,
     which always follows a real command, out of this list.
-    Returns one dict per payload: key, data, count, period (s), frames.
+    Polls that carry a sequence number are found too: same-shape messages that differ only in a
+    byte counting up by one (plus, optionally, a trailing checksum byte). Because a user could step
+    a value by one at a steady pace, these need at least 2 * min_count (and 8) copies.
+    Returns one dict per payload: key, data, mask (positions that vary), count, period (s), frames.
     """
     outs = sorted((t for t in transfers if t.is_out and t.data), key=lambda t: t.ts)
     groups: dict[tuple, list[Transfer]] = {}
     for t in outs:
         groups.setdefault((t.key(), t.data), []).append(t)
-    found = []
+    found, claimed = [], set()
     for (key, data), ts in groups.items():
         if len(ts) < min_count:
             continue
-        iv = sorted(b.ts - a.ts for a, b in zip(ts, ts[1:]))
-        period = iv[len(iv) // 2]
-        if period <= 0:
+        period = _periodic(ts, outs)
+        if period is None:
             continue
-        # steady rhythm: most intervals within 35% of the median (a missed or late poll is fine)
-        if sum(abs(x - period) <= 0.35 * period for x in iv) < 0.6 * len(iv):
+        claimed |= {id(t) for t in ts}
+        found.append({"key": key, "data": data, "mask": [], "count": len(ts), "period": round(period, 3),
+                      "frames": [t.frame for t in ts], "ids": {id(t) for t in ts}})
+    for key, tpl, mask, ts in _counter_candidates(outs, claimed, max(2 * min_count, 8)):
+        if any(id(t) in claimed for t in ts):
             continue
-        window = 0.1 * period
-        others = [t.ts for t in outs if (t.key(), t.data) != (key, data)]
-        alone = sum(not any(abs(o - t.ts) <= window for o in others) for t in ts)
-        if alone < 0.5 * len(ts):
+        period = _periodic(ts, outs)
+        if period is None:
             continue
-        found.append({"key": key, "data": data, "count": len(ts), "period": round(period, 3),
-                      "frames": [t.frame for t in ts]})
+        claimed |= {id(t) for t in ts}
+        found.append({"key": key, "data": tpl, "mask": list(mask), "count": len(ts),
+                      "period": round(period, 3), "frames": [t.frame for t in ts],
+                      "ids": {id(t) for t in ts}})
     return found
 
 
 def drop_background(transfers: list[Transfer], background: list[dict]) -> list[Transfer]:
-    bg = {(b["key"], b["data"]) for b in background}
-    return [t for t in transfers if not (t.is_out and t.data and (t.key(), t.data) in bg)]
+    ids = set().union(*(b["ids"] for b in background)) if background else set()
+    return [t for t in transfers if id(t) not in ids]
+
+
+def pattern(data: bytes, mask) -> str:
+    """Hex payload with the varying (sequence/checksum) bytes shown as ??."""
+    return " ".join("??" if i in mask else f"{b:02x}" for i, b in enumerate(data))
 
 
 def segment_by_gaps(transfers: list[Transfer], labels: list[str]) -> list[dict]:

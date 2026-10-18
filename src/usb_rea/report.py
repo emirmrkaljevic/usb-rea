@@ -40,8 +40,9 @@ def render(proto: Protocol, capture: str = "", sha256: str = "") -> str:
         L.append("")
     if proto.background:
         L += ["## Background traffic (ignored)", "",
-              "Identical host→device messages sent on a steady rhythm, independent of your clicks "
-              "(status polls, keep-alives). They were left out of the analysis.", "",
+              "Host→device messages repeated on a steady rhythm, independent of your clicks "
+              "(status polls, keep-alives; `??` marks a sequence or checksum byte that changes "
+              "every time). They were left out of the analysis.", "",
               "| Channel | Payload | Count | Every | First frames |", "|---|---|---|---|---|"]
         for b in proto.background:
             chan = f"{XFER_NAMES.get(b['xfer_type'])} EP 0x{b['endpoint']:02x}"

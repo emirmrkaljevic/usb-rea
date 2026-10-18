@@ -65,3 +65,23 @@ def test_constant_apply_packet_is_not_background(tmp_path):
 def test_no_polls_no_background(tmp_path):
     cap, _ = make_capture(tmp_path / "fan.pcap", device="fan")
     assert analyze(cap).background == []
+
+
+@pytest.mark.parametrize("period", [0.25, 0.7])
+def test_polls_with_sequence_number(tmp_path, period):
+    # status request carries a counter byte, so its checksum changes too: no two copies are equal
+    clean, m = make_capture(tmp_path / "clean.pcap")
+    m.unlink()
+    noisy, m = make_capture(tmp_path / "seq.pcap", poll=period, poll_seq=True)
+    m.unlink()
+    p = analyze(noisy, labels=LAMP)
+    _same(p, analyze(clean, labels=LAMP))
+    assert len(p.background) == 1 and p.background[0]["payload"] == "aa 10 ?? 00 ??"
+    assert "`aa 10 ?? 00 ??`" in render(p)
+
+
+def test_value_stepped_by_one_is_not_background(tmp_path):
+    # a user clicking "level +1" at a perfectly steady pace looks like a counter; too few to count
+    msgs = [(f"level {v}", bytes([0x40, 0x01, v, (0x41 + v) & 0xFF]), ("bulk", 2)) for v in range(7)]
+    cap, m = capture_from_messages(tmp_path / "step.pcap", msgs, 0x1234, 0x5678)
+    assert find_background(read_transfers(cap)) == []

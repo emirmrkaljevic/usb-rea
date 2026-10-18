@@ -5,6 +5,8 @@
   user's clicks (status polls, keep-alives) are detected and set aside before `--labels` splitting
   and diffing; the report gets a *Background traffic (ignored)* section, JSON/MCP output a
   `background` list. Previously a polling vendor app made `--labels` split at the wrong places.
+- background polls with a sequence number (a byte counting up by one, optionally with a trailing
+  checksum byte) are detected as well; the report shows them with `??` at the changing bytes
 - install docs use PyPI (`pip install usb-rea`, `uvx --from usb-rea usb-rea mcp`) instead of git URLs
 - releases also publish `server.json` to the official MCP Registry (GitHub OIDC, no token)
 

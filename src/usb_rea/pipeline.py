@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-from .actions import assign, drop_background, find_background, load_markers
+from .actions import assign, drop_background, find_background, load_markers, pattern
 from .infer import infer, Protocol
 from .pcap import find_ids, read_transfers
 
@@ -38,7 +38,7 @@ def analyze(capture: str | Path, markers: str | Path | None = None, device: int 
     proto = infer(acts, vid, pid)
     proto.hid = hid_summary(ts, proto)
     proto.background = [{"endpoint": b["key"][1], "xfer_type": b["key"][2],
-                         "setup": b["key"][3] or None, "payload": b["data"].hex(" "),
+                         "setup": b["key"][3] or None, "payload": pattern(b["data"], b["mask"]),
                          "count": b["count"], "period": b["period"], "frames": b["frames"][:5]}
                         for b in background]
     return proto
