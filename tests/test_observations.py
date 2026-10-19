@@ -25,6 +25,7 @@ def test_parse_observation_labels():
     assert split_observation("seen rpm 1180") == [("rpm", 1180.0)]
     assert split_observation("Seen RPM=1180, temp 34.5°C") == [("rpm", 1180.0), ("temp", 34.5)]
     assert split_observation("seen fan speed 1180rpm") == [("fan speed", 1180.0)]
+    assert split_observation("seen pump on, alarm off") == [("pump", 1.0), ("alarm", 0.0)]
     assert split_observation("fan 1200") == [] and not is_observation("screen 3") and is_observation("seen")
 
 
@@ -141,3 +142,43 @@ def test_observations_never_become_commands(tmp_path):
     m.unlink()   # --labels mode: a 'seen' label has no timestamp, so it is skipped
     p = analyze(cap, labels=FAN_ACTIONS[:4] + ["seen rpm 1200"] + FAN_ACTIONS[4:])
     assert [c.name for c in p.commands] == ["fan", "color", "mode"] and p.observations == []
+
+
+def _flags(i):
+    return bytes([0x40 | (i % 2) | (i % 3 == 2) << 3])   # bit 0 pump, bit 3 alarm, bit 6 always set
+
+
+def test_on_off_flags_named_by_bit(tmp_path):
+    shown = {1: "seen pump on alarm off", 2: "seen pump off alarm on", 4: "seen pump off, alarm off"}
+    p = analyze(_report_capture(tmp_path / "f.pcap", _flags, shown))
+    r = _poll(p)
+    n = _named(r)
+    assert (n["pump"].offset, n["pump"].bit_offset) == (1, 0) and (n["alarm"].offset, n["alarm"].bit_offset) == (1, 3)
+    assert [x[1] for x in n["pump"].observed] == [1, 0, 0] and r.explained == 3
+    assert "bit 3: alarm (1 = on)" in n["alarm"].describe()
+    assert all(o["matched"] for o in p.observations) and p.observations[0]["matched"] == ["GET_REPORT Input 0x03 byte 1 bit 0"]
+    assert not any("bits other than" in x for x in r.notes)
+    md = render(p)
+    assert "`alarm` (byte 1, bit 3) is on when the bit is 1" in md and "| pump on |" in md
+    path = tmp_path / "drv.py"
+    path.write_text(generate(p))
+    spec = importlib.util.spec_from_file_location("drv_flags", path)
+    drv = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(drv)
+    fake = mock.MagicMock()
+    fake.__iter__.return_value = []
+    fake.ctrl_transfer.return_value = bytes([0x03, 0x49, 0x00])
+    q = next(getattr(drv.Device(fake), m) for m in dir(drv.Device) if m.startswith("query_"))
+    out = q()
+    assert out["pump"] is True and out["alarm"] is True and out["ok"]
+
+
+def test_flags_need_both_states_and_one_bit(tmp_path):
+    only_on = {1: "seen pump on", 3: "seen pump on"}
+    assert not _named(_poll(analyze(_report_capture(tmp_path / "o.pcap", _flags, only_on))))
+    together = lambda i: bytes([0x03 * (i % 2)])           # bits 0 and 1 always flip together
+    r = _poll(analyze(_report_capture(tmp_path / "t.pcap", together, {1: "seen pump on", 2: "seen pump off"})))
+    assert not _named(r) and any("fits several bits" in x for x in r.notes)
+    extra = lambda i: bytes([(i % 2) | (i % 4 == 3) << 5])  # bit 5 changes too but was never named
+    r = _poll(analyze(_report_capture(tmp_path / "e.pcap", extra, {1: "seen pump on", 2: "seen pump off"})))
+    assert _named(r)["pump"].bit_offset == 0 and any("mask 0x20" in x for x in r.notes)

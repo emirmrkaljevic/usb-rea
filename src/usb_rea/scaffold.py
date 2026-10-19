@@ -124,6 +124,8 @@ def parse(spec, data, sent=b""):
         elif kind == "bitfield":
             bits = (int.from_bytes(data[off:off + w], "little") >> f["bit_offset"]) & ((1 << f["bit_width"]) - 1)
             out[f["name"]] = (bits - f["bias"]) / f["scale"]
+        elif kind == "reading" and "bit_width" in f:  # on/off status flag
+            out[f["name"]] = bool((data[off] >> f["bit_offset"]) & 1)
         elif kind == "reading" and "scale" in f:  # named after what the vendor app showed
             v = (raw - f["bias"]) / f["scale"]
             out[f["name"]] = int(v) if v == int(v) else v

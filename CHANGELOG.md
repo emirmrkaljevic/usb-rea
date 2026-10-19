@@ -9,6 +9,11 @@
   `scale`/`bias` and the observations in `observed`), and the output a top-level `observations`
   list; the report shows each formula with its frames and marker times plus an *Observations*
   section that lists unmatched values; `query_<name>()` returns e.g. `{"rpm": 1180, "temp": 34, "ok": True}`
+- on/off status flags: `seen pump on, alarm off` (also true/false, yes/no) counts as 1/0. A name seen
+  both on and off is matched to the single bit of a reply byte reading that is 1 exactly when the app
+  said on; several flags can share a byte, two bits that always flip together are left unnamed (note),
+  and other changing bits of a flag byte are noted. Report: `bit N: name (1 = on)` and an on/off
+  evidence table; observations match e.g. `byte 1 bit 0`; the driver's `query_<name>()` returns booleans
 - synthetic fan: `make_capture(..., observe=True)` adds `seen` markers; `usb-rea demo --device fan` uses them
 
 ## v0.4.0 — 2026-10-19

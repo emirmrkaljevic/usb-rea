@@ -51,7 +51,8 @@ class Response:
 
     @property
     def explained(self) -> int:
-        return sum(f.width for f in self.fields if f.kind not in ("reading", "unknown") or f.name)
+        return len({o for f in self.fields if f.kind not in ("reading", "unknown") or f.name
+                    for o in range(f.offset, f.offset + f.width)})
 
 
 def is_control_read(t: Transfer) -> bool:
@@ -272,8 +273,10 @@ def name_readings(fields: list[Field], replies: list[Transfer], seen: list[dict]
     fit, the other way round. A reading takes the name when it equals every observation of that name
     (2+ observations, within one unit or 1%), or when a linear raw = value * scale + bias fits them
     exactly and survives leave-one-out (3+ observations, as for commands). Two neighbouring byte
-    readings are also tried as one 16-bit LE/BE number. A name that fits more than one place is left
-    out, with a note."""
+    readings are also tried as one 16-bit LE/BE number. A name only ever seen as on/off ('seen pump
+    on', 'seen pump off') is a status flag: it takes the one bit of a byte reading that is 1 exactly
+    when the app showed 'on' (see name_flag). A name that fits more than one place is left out, with
+    a note."""
     rts = [r.ts for r in replies]
 
     def near(ts, after):
@@ -286,6 +289,10 @@ def name_readings(fields: list[Field], replies: list[Transfer], seen: list[dict]
     for o in seen:
         by_name[o["name"]].append(o)
     for name, obs in by_name.items():
+        if {o["value"] for o in obs} == {0.0, 1.0}:
+            tries = [[(o, r) for o in obs if (r := near(o["ts"], after))] for after in (False, True)]
+            fields = name_flag(name, fields, replies, tries, notes)
+            continue
         free = [f for f in fields if f.kind == "reading" and not f.name]
         cands = [(f.offset, f.width, f.endian) for f in free] + [
             (f.offset, 2, e) for f, g in zip(free, free[1:])
@@ -315,7 +322,42 @@ def name_readings(fields: list[Field], replies: list[Transfer], seen: list[dict]
                   frames=[r.frame for r in replies][:20],
                   observed=[(o["value"], _get(r.data, off, w, end), r.frame, o["time"]) for o, r in pts])
         fields = sorted([x for x in fields if not off <= x.offset < off + w] + [f], key=lambda x: x.offset)
+    for off in sorted({f.offset for f in fields if f.bit_width == 1 and f.name}):
+        rest = 0
+        for a, b in zip(replies, replies[1:]):
+            rest |= a.data[off] ^ b.data[off]
+        rest &= ~sum(1 << f.bit_offset for f in fields if f.offset == off and f.bit_width == 1) & 0xFF
+        if rest:
+            notes.append(f"byte {off}: bits other than the named flags also change (mask 0x{rest:02x}); not described")
     return fields
+
+
+def name_flag(name: str, fields: list[Field], replies: list[Transfer], tries: list, notes: list[str]) -> list[Field]:
+    """Status flag ('seen pump on' / 'seen pump off'): the bit of a byte reading that is 1 every time
+    the app showed on and 0 every time it showed off (both states must be seen). Several flags can share
+    a byte; a bit that is not alone in fitting (two bits that always flip together) is left unnamed."""
+    taken = {(f.offset, f.bit_offset) for f in fields if f.name and f.bit_width == 1}
+    offs = sorted({f.offset for f in fields if f.kind == "reading" and f.width == 1 and (not f.name or f.bit_width == 1)})
+    hits = []
+    for off in offs:
+        for bit in range(8):
+            if (off, bit) in taken:
+                continue
+            pts = next((pts for pts in tries if {o["value"] for o, _ in pts} == {0.0, 1.0}
+                        and all((r.data[off] >> bit) & 1 == o["value"] for o, r in pts)), None)
+            if pts:
+                hits.append((off, bit, pts))
+    if len(hits) > 1:
+        where = ", ".join(f"byte {o} bit {b}" for o, b, _ in hits)
+        notes.append(f"'{name}' (on/off) fits several bits ({where}): left unnamed; note it while other states differ")
+    if len(hits) != 1:
+        return fields
+    off, bit, pts = hits[0]
+    f = Field(off, "reading", 1, "le", limits=(0, 1), name=name, bit_offset=bit, bit_width=1,
+              frames=[r.frame for r in replies][:20],
+              observed=[(o["value"], (r.data[off] >> bit) & 1, r.frame, o["time"]) for o, r in pts])
+    return sorted([x for x in fields if not (x.offset == off and not x.name)] + [f],
+                  key=lambda x: (x.offset, x.bit_offset or 0))
 
 
 def link_command_ids(responses: list[Response], qconsts: dict[str, dict[int, int]]):

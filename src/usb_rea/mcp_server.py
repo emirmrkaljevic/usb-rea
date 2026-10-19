@@ -67,6 +67,7 @@ def build():
         not an action: what the vendor app displays right now. It does not end the current action
         and is never diffed; analysis uses it to name and scale the device's reply readings
         (rpm = raw, temp = (raw - 40) / 2). Mark it when the human reads a value off the screen.
+        On/off states ('seen pump on', 'seen pump off, alarm on') name single status-flag bits.
         """
         return json.dumps(append_marker(default_markers(capture), label))
 

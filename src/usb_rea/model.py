@@ -94,15 +94,17 @@ def is_observation(label: str) -> bool:
 
 
 def split_observation(label: str) -> list[tuple[str, float]]:
-    """'seen rpm 1180, temp 34°C' -> [('rpm', 1180.0), ('temp', 34.0)]; [] for other labels."""
+    """'seen rpm 1180, temp 34°C' -> [('rpm', 1180.0), ('temp', 34.0)]; [] for other labels.
+    On/off states count as 1/0: 'seen pump on, alarm off' -> [('pump', 1.0), ('alarm', 0.0)]."""
     import re
     if not is_observation(label):
         return []
     out, name = [], []
     for t in re.split(r"[\s,=:;]+", label.strip()[4:]):
         v = re.fullmatch(r"(-?\d+(?:\.\d+)?)(?:%|°?[a-zA-Z]{0,3})", t)
-        if v and name:
-            out.append((" ".join(name).lower(), float(v.group(1))))
+        state = {"on": 1.0, "off": 0.0, "true": 1.0, "false": 0.0, "yes": 1.0, "no": 0.0}.get(t.lower())
+        if (v or state is not None) and name:
+            out.append((" ".join(name).lower(), float(v.group(1)) if v else state))
             name = []
         elif t and not v:
             name.append(t)

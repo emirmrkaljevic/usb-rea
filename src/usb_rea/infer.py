@@ -59,6 +59,8 @@ class Field:
             return f"counter (+{self.step} per message)"
         if self.kind == "echo":
             return f"= query byte {self.echo}" + (f" (0x{self.const:02x})" if self.const is not None else "")
+        if self.kind == "reading" and self.name and self.bit_width == 1:
+            return f"bit {self.bit_offset}: {self.name} (1 = on)"
         if self.kind == "reading" and self.name:
             return f"{w or 'u8 '}{self.name} = {formula(self.scale, self.bias)}, seen {self.limits[0]}..{self.limits[1]}"
         if self.kind == "reading":

@@ -55,6 +55,8 @@ def analyze(capture: str | Path, markers: str | Path | None = None, device: int 
 
 
 def _span(f) -> str:
+    if f.bit_width == 1:
+        return f"byte {f.offset} bit {f.bit_offset}"
     return f"bytes {f.offset}-{f.offset + f.width - 1}" if f.width > 1 else f"byte {f.offset}"
 
 

@@ -115,10 +115,13 @@ def _responses(proto: Protocol) -> list[str]:
                 L.append(f"| {span} | {f.kind} | `{f.describe()}` |")
         for f in (f for f in r.fields if f.name):
             span = f"bytes {f.offset}-{f.offset + f.width - 1}" if f.width > 1 else f"byte {f.offset}"
-            L += ["", f"`{f.name}` ({span}, {'u16' + f.endian if f.width == 2 else 'u8'}) = `{formula(f.scale, f.bias)}`, "
+            what = (f"(byte {f.offset}, bit {f.bit_offset}) is on when the bit is 1" if f.bit_width == 1 else
+                    f"({span}, {'u16' + f.endian if f.width == 2 else 'u8'}) = `{formula(f.scale, f.bias)}`")
+            L += ["", f"`{f.name}` {what}, "
                   f"from {len(f.observed)} observation(s) of the vendor app's display:", "",
                   "| App showed | Marker at | Raw | Reply frame |", "|---|---|---|---|"]
-            L += [f"| {f.name} {v:g} | {t:g} s | {raw} | {fr} |" for v, raw, fr, t in f.observed[:8]]
+            L += [f"| {f.name} {('off', 'on')[int(v)] if f.bit_width == 1 else f'{v:g}'} | {t:g} s | {raw} | {fr} |"
+                  for v, raw, fr, t in f.observed[:8]]
         shown = r.samples[:8]
         L += ["", "Evidence" + (f" (first {len(shown)} of {r.answered}):" if r.answered > len(shown) else ":"), "",
               "| Action | Query frame | Reply | Reply frame |", "|---|---|---|---|"]

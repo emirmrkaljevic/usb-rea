@@ -48,6 +48,7 @@ level        100%  0xa5 | 0x02 | bits[0:4] = round(value * 1 + 0) | 0x00 | sum8(
 | checksums | sum8, xor8, neg/inv sum8, sum16, CRC8, CRC8/MAXIM, CRC16 CCITT-FALSE/XMODEM/MODBUS/KERMIT |
 | device replies: echoed query bytes, values fitted to labels, readings | status poll → `a5 40 2a 07 26 00 3c` = RPM `u16le` reading, temperature `u8` reading, sum8 |
 | named readings, from what the vendor app shows (`seen rpm 1180`) | bytes 2-3 `u16le rpm = raw`, byte 4 `temp = (raw - 40) / 2` |
+| on/off status flags (`seen pump on`, `seen pump off`) | byte 5 `bit 0: pump (1 = on)` |
 
 Linear fits must survive leave-one-out cross-checks; otherwise usb-rea falls back to an honest lookup table and says so.
 
@@ -104,8 +105,14 @@ every observation of that name (2+ observations, within one unit or 1%), or when
 (3+ observations with distinct values). Two neighbouring byte readings are also tried as one 16-bit
 LE/BE number. The report shows the formula with the frames and marker times behind it, and lists
 observations that matched nothing; the driver returns `{"rpm": 1180, "temp": 34, "ok": True, …}`.
+
+On/off states work too: `mark "seen pump on, alarm off"` (also `true`/`false`, `yes`/`no`). A name
+seen both on and off becomes a status flag, the one bit of a reply byte that is 1 every time the app
+said on and 0 every time it said off; several flags can share a byte, and the driver returns
+`{"pump": True, "alarm": False, …}`. Two bits that always flip together are left unnamed, and bits
+of a flag byte that change but were never named are pointed out in the report.
 Limits: only replies (not commands) are named, a name that fits two places is left out, 32-bit and
-bit-packed readings are not tried, and display rounding coarser than one unit (e.g. RPM shown in
+multi-bit packed readings are not tried, and display rounding coarser than one unit (e.g. RPM shown in
 steps of 10) only works for the identity, not for a scaled fit. `seen` labels in `--labels` mode have
 no timestamp and are skipped.
 
@@ -169,6 +176,7 @@ usb-rea hid capture.pcapng --decode "10ff0d1d000000" --type Output
 - [x] background traffic: periodic status polls / keep-alives are detected and ignored
 - [x] device responses: replies to commands, background polls and GET_REPORT decoded, `query_*()` driver methods
 - [x] named readings: `seen rpm 1180` markers name and scale reply readings (identity or linear, 8/16-bit)
+- [x] on/off status flags: `seen pump on` / `seen pump off` name single bits of reply bytes
 - [ ] state machines (multi-step handshakes)
 
 ## Legal
