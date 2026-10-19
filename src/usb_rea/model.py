@@ -85,3 +85,25 @@ def split_values(label: str) -> tuple[str, list[float]]:
         return " ".join(name).lower(), nums
     n, v = split_label(label)
     return n, [] if v is None else [v]
+
+
+def is_observation(label: str) -> bool:
+    """'seen rpm 1180' notes what the vendor app displayed; it is not an action."""
+    import re
+    return bool(re.match(r"\s*seen\b", label, re.I))
+
+
+def split_observation(label: str) -> list[tuple[str, float]]:
+    """'seen rpm 1180, temp 34°C' -> [('rpm', 1180.0), ('temp', 34.0)]; [] for other labels."""
+    import re
+    if not is_observation(label):
+        return []
+    out, name = [], []
+    for t in re.split(r"[\s,=:;]+", label.strip()[4:]):
+        v = re.fullmatch(r"(-?\d+(?:\.\d+)?)(?:%|°?[a-zA-Z]{0,3})", t)
+        if v and name:
+            out.append((" ".join(name).lower(), float(v.group(1))))
+            name = []
+        elif t and not v:
+            name.append(t)
+    return out

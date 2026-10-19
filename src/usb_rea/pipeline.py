@@ -3,8 +3,9 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-from .actions import assign, drop_background, find_background, load_markers, pattern
+from .actions import assign, drop_background, find_background, load_markers, observations, pattern
 from .infer import infer, Protocol
+from .model import is_observation
 from .pcap import find_ids, read_transfers
 
 
@@ -15,6 +16,7 @@ def default_markers(capture: str | Path) -> Path:
 def analyze(capture: str | Path, markers: str | Path | None = None, device: int | None = None,
             labels: list[str] | None = None) -> Protocol:
     ts = read_transfers(capture)
+    t0 = min((t.ts for t in ts), default=0.0)
     ids = find_ids(ts)
     if device is None:
         # the device with the most host->device data is almost always the target
@@ -32,9 +34,11 @@ def analyze(capture: str | Path, markers: str | Path | None = None, device: int 
     ts = drop_background(ts, background)
     if labels:
         from .actions import segment_by_gaps
-        marks = segment_by_gaps(ts, labels)
+        # 'seen ...' labels carry no timestamp here, so there is nothing to pair them with
+        marks = segment_by_gaps(ts, [lb for lb in labels if not is_observation(lb)])
     else:
         marks = load_markers(markers or default_markers(capture))
+    seen = observations(marks, t0)
     acts = assign(ts, marks)
     proto = infer(acts, vid, pid)
     proto.hid = hid_summary(ts, proto)
@@ -43,8 +47,15 @@ def analyze(capture: str | Path, markers: str | Path | None = None, device: int 
                          "count": b["count"], "period": b["period"], "frames": b["frames"][:5]}
                         for b in background]
     from .responses import analyze_responses
-    proto.responses = analyze_responses(everything, proto.commands, background)
+    proto.responses = analyze_responses(everything, proto.commands, background, seen)
+    proto.observations = [{k: o[k] for k in ("label", "time", "name", "value")} | {"matched": [
+        f"{r.query} {_span(f)}" for r in proto.responses for f in r.fields
+        if f.name == o["name"] and any(x[3] == o["time"] for x in f.observed)]} for o in seen]
     return proto
+
+
+def _span(f) -> str:
+    return f"bytes {f.offset}-{f.offset + f.width - 1}" if f.width > 1 else f"byte {f.offset}"
 
 
 def hid_summary(transfers, proto: Protocol) -> list[dict]:

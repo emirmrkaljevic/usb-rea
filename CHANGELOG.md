@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+- named readings: `usb-rea mark "seen rpm 1180 temp 34"` notes what the vendor app displays. These
+  observation markers never become actions or affect diffing/segmentation; they are matched to the
+  reply just before (or after) them, and a reply reading that equals them (identity) or fits
+  `raw = value * scale + bias` with the leave-one-out guard (3+ observations) gets the name. Two
+  neighbouring byte readings are also tried as u16 LE/BE. JSON/MCP fields gain `name` (with
+  `scale`/`bias` and the observations in `observed`), and the output a top-level `observations`
+  list; the report shows each formula with its frames and marker times plus an *Observations*
+  section that lists unmatched values; `query_<name>()` returns e.g. `{"rpm": 1180, "temp": 34, "ok": True}`
+- synthetic fan: `make_capture(..., observe=True)` adds `seen` markers; `usb-rea demo --device fan` uses them
+
 ## v0.4.0 — 2026-10-19
 The device's answers are decoded too, not only what the vendor app sends.
 

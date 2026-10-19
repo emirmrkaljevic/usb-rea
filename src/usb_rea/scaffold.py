@@ -124,6 +124,9 @@ def parse(spec, data, sent=b""):
         elif kind == "bitfield":
             bits = (int.from_bytes(data[off:off + w], "little") >> f["bit_offset"]) & ((1 << f["bit_width"]) - 1)
             out[f["name"]] = (bits - f["bias"]) / f["scale"]
+        elif kind == "reading" and "scale" in f:  # named after what the vendor app showed
+            v = (raw - f["bias"]) / f["scale"]
+            out[f["name"]] = int(v) if v == int(v) else v
         elif kind in ("counter", "reading"):
             out[f["name"]] = raw
         elif kind == "checksum":
@@ -174,6 +177,8 @@ def generate(proto: Protocol) -> str:
         for f in r.fields:
             if f.kind in ("value", "bitfield"):
                 name = prefix + (f"_{f.index}" if f.index else "")
+            elif f.name:
+                name = _ident(f.name) + ("_value" if _ident(f.name) in ("raw", "ok", "error", "checksum_ok") else "")
             else:
                 name = f"{f.kind}_{f.offset}"
             d = dict(kind=f.kind, name=name, offset=f.offset, width=f.width, endian=f.endian,

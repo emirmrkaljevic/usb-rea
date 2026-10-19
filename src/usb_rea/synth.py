@@ -4,7 +4,8 @@ Devices (VID 0x1234 / PID 0xABCD):
   lamp — bulk/HID: AA <cmd> <arg> 00 <sum8>; brightness/power/hue (8-bit)
   fan  — 5A <seq> <cmd> <args> pad + CRC16/MODBUS; 16-bit BE RPM, RGB, lookup.
          Replies A5 <cmd> <seq> <arg u16 LE> <sum8>; with poll > 0 it is asked for its status and
-         answers A5 40 <current RPM u16 LE> <temperature °C> 00 <sum8>
+         answers A5 40 <current RPM u16 LE> <temperature °C> 00 <sum8>; with observe=True the
+         markers also note what the vendor app showed now and then ('seen rpm 1186 temp 39')
   dial — A5 <cmd> <args> <sum8>; 32-bit LE position + 4-bit level bitfield
 """
 from __future__ import annotations
@@ -154,7 +155,7 @@ def encode_dial(name: str, values: list[float]) -> bytes:
 
 def make_capture(path, actions: list[str] | None = None, transport: str = "bulk",
                  noise: bool = True, seed: int = 0, device: str = "lamp",
-                 poll: float = 0.0, poll_seq: bool = False) -> tuple[Path, Path]:
+                 poll: float = 0.0, poll_seq: bool = False, observe: bool = False) -> tuple[Path, Path]:
     """Write <path> (pcap) and <path>.actions.json. Returns both paths.
 
     poll: if > 0, the "vendor app" also sends a status request every `poll` seconds on the
@@ -163,6 +164,8 @@ def make_capture(path, actions: list[str] | None = None, transport: str = "bulk"
     and a slowly drifting temperature, so tests have ground truth for decoded replies.
     poll_seq: the lamp's status request carries a sequence byte (and so a changing checksum),
     which the reply echoes.
+    observe: (fan with poll) every 5th status reply is also noted as an observation marker
+    'seen rpm N temp T', 60 ms after the reply, as if the user read the vendor app's screen.
 
     device: 'lamp' (see module doc), 'fan' (counter + 16-bit BE + RGB + lookup + CRC16),
     or 'dial' (32-bit LE position + 4-bit brightness bitfield + sum8).
@@ -230,7 +233,11 @@ def make_capture(path, actions: list[str] | None = None, transport: str = "bulk"
             if device == "fan":
                 target = [r for ts_, r in targets if ts_ <= at][-1]
                 temp = min(45, max(35, temp + sensor.choice((-1, 0, 0, 1))))
-                reply = fan_status(target + sensor.randint(-12, 12), temp)
+                rpm = target + sensor.randint(-12, 12)
+                reply = fan_status(rpm, temp)
+                if observe and n % 5 == 2:
+                    marks.append({"label": f"seen rpm {rpm} temp {temp}", "start": at + 0.07, "end": at + 0.07})
+                n += 1
             if transport == "control":
                 w.control_out(at, bytes([0x21, 0x09, 0x00, 0x02, 0, 0, len(status), 0]), status)
             else:

@@ -25,9 +25,11 @@ mode   100%  0x5a | counter (+1 per message) | 0x30 | lookup 1→0x11, 2→0x22,
 
 device replies:
 fan    6/6  0xa5 | = query byte 2 (0x10) | = query byte 1 | u16le round(value * 1 + 0) | sum8(bytes[0:5])
-poll 1 4/7  0xa5 | = query byte 2 (0x40) | u16le reading, seen 794..4012 | u8 reading, seen 35..38 | 0x00 | sum8(bytes[0:6])
+poll 1 7/7  0xa5 | = query byte 2 (0x40) | u16le rpm = raw, seen 794..4012 | u8 temp = raw, seen 35..38 | 0x00 | sum8(bytes[0:6])
+
+12 of 12 'seen' observations matched a reply byte (rpm, temp)
 ```
-It writes a synthetic capture of a fan controller (its vendor app also polls the fan's status), recovers the protocol and the replies, and writes `report.md` (every claim linked to Wireshark frame numbers) and a working pyusb driver that encodes values it never saw and decodes what the fan answers.
+It writes a synthetic capture of a fan controller (its vendor app also polls the fan's status, and the markers note what the app's screen showed, `seen rpm 1207 temp 37`), recovers the protocol and the replies, names the readings, and writes `report.md` (every claim linked to Wireshark frame numbers) and a working pyusb driver that encodes values it never saw and decodes what the fan answers.
 
 `--device lamp` (default) is a simple 8-bit device; `--device dial` shows 32-bit values and packed bitfields:
 ```
@@ -45,6 +47,7 @@ level        100%  0xa5 | 0x02 | bits[0:4] = round(value * 1 + 0) | 0x00 | sum8(
 | rolling counters | sequence byte +1 per message |
 | checksums | sum8, xor8, neg/inv sum8, sum16, CRC8, CRC8/MAXIM, CRC16 CCITT-FALSE/XMODEM/MODBUS/KERMIT |
 | device replies: echoed query bytes, values fitted to labels, readings | status poll → `a5 40 2a 07 26 00 3c` = RPM `u16le` reading, temperature `u8` reading, sum8 |
+| named readings, from what the vendor app shows (`seen rpm 1180`) | bytes 2-3 `u16le rpm = raw`, byte 4 `temp = (raw - 40) / 2` |
 
 Linear fits must survive leave-one-out cross-checks; otherwise usb-rea falls back to an honest lookup table and says so.
 
@@ -87,6 +90,25 @@ order changes smoothly and the other jumps. The generated driver gets `query_<na
 send the query, read the reply and return a dict (`{"reading_2": 1834, "checksum_ok": True, …}`).
 Try it with `usb-rea demo --device fan` or on a capture with polls.
 
+### Naming readings: tell it what the vendor app shows
+A reading is just bytes until you say what it is. While capturing, note what the vendor app
+displays now and then:
+```bash
+usb-rea mark -m fan.pcapng.actions.json "seen rpm 1180 temp 34"   # several name/value pairs are fine
+```
+A `seen` marker is an observation, not an action: it does not end the action in progress, is never
+diffed, and never becomes a command. Each observation is compared with the reply just before it
+(what the app was showing) or just after it, within 1 s. A reading takes the name when it equals
+every observation of that name (2+ observations, within one unit or 1%), or when a linear
+`raw = value * scale + bias` fits them exactly and survives the same leave-one-out check as commands
+(3+ observations with distinct values). Two neighbouring byte readings are also tried as one 16-bit
+LE/BE number. The report shows the formula with the frames and marker times behind it, and lists
+observations that matched nothing; the driver returns `{"rpm": 1180, "temp": 34, "ok": True, …}`.
+Limits: only replies (not commands) are named, a name that fits two places is left out, 32-bit and
+bit-packed readings are not tried, and display rounding coarser than one unit (e.g. RPM shown in
+steps of 10) only works for the identity, not for a scaled fit. `seen` labels in `--labels` mode have
+no timestamp and are skipped.
+
 ## MCP server
 `pip install usb-rea` then add `usb-rea mcp` as a stdio server. Tools: `capture_start`, `capture_stop`, `mark_action`, `diff_actions`, `report`, `scaffold_driver`, `hid_descriptor` (decode a HID report descriptor / report payloads), `wireshark_dissector`, `replay_packet` (refuses unless the human confirmed). Analysis tools accept the same `labels` argument as the CLI for marker-free captures.
 
@@ -98,7 +120,7 @@ For Claude Code: `claude mcp add usb-rea -- uvx --from usb-rea usb-rea mcp`. The
 
 ## How it works
 1. `usb-rea capture start` — record traffic (usbmon / USBPcap)
-2. `usb-rea mark "brightness 50%"` — label each action you take in the vendor app
+2. `usb-rea mark "brightness 50%"` — label each action you take in the vendor app (`mark "seen rpm 1180"` notes what it displays)
 3. `usb-rea diff` — which bytes change per action, value correlation, checksums, counters
 4. `usb-rea infer` — message templates + evidence report
 5. `usb-rea scaffold` — generate a pyusb driver and replay tests
@@ -146,6 +168,7 @@ usb-rea hid capture.pcapng --decode "10ff0d1d000000" --type Output
 - [x] multi-packet transactions (write + apply), including checksums over earlier packets
 - [x] background traffic: periodic status polls / keep-alives are detected and ignored
 - [x] device responses: replies to commands, background polls and GET_REPORT decoded, `query_*()` driver methods
+- [x] named readings: `seen rpm 1180` markers name and scale reply readings (identity or linear, 8/16-bit)
 - [ ] state machines (multi-step handshakes)
 
 ## Legal

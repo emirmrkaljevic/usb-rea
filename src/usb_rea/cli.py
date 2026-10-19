@@ -22,7 +22,8 @@ def main(argv=None) -> int:
     c.add_argument("-o", "--out", default="capture.pcapng")
     c.add_argument("--bus", type=int, default=0)
 
-    m = sub.add_parser("mark", help="mark the action you are about to do in the vendor app")
+    m = sub.add_parser("mark", help="mark the action you are about to do in the vendor app, "
+                       "or what it shows right now ('seen rpm 1180 temp 34')")
     m.add_argument("label")
     m.add_argument("-m", "--markers", default="capture.pcapng.actions.json")
 
@@ -162,7 +163,9 @@ def _demo(outdir: Path, device: str = "lamp") -> int:
     from .scaffold import generate
     outdir.mkdir(parents=True, exist_ok=True)
     # the fan's vendor app also polls its status, so the demo shows decoded replies too
-    cap, _ = make_capture(outdir / f"{device}.pcap", device=device, poll=0.5 if device == "fan" else 0.0)
+    # and the markers note what its screen showed ('seen rpm 1186 temp 39'), which names the readings
+    cap, _ = make_capture(outdir / f"{device}.pcap", device=device, poll=0.5 if device == "fan" else 0.0,
+                          observe=device == "fan")
     proto = analyze(cap)
     (outdir / "report.md").write_text(render(proto, str(cap), sha256(cap)))
     (outdir / f"{device}_driver.py").write_text(generate(proto))
@@ -177,6 +180,10 @@ def _demo(outdir: Path, device: str = "lamp") -> int:
         print("\ndevice replies:")
         for r in proto.responses:
             print(f"{r.query:12s} {r.explained}/{r.length}  " + " | ".join(f.describe() for f in r.fields))
+    if proto.observations:
+        hit = sum(bool(o["matched"]) for o in proto.observations)
+        print(f"\n{hit} of {len(proto.observations)} 'seen' observations matched a reply byte "
+              f"({', '.join(sorted({o['name'] for o in proto.observations if o['matched']}))})")
     print(f"\nwrote {outdir}/report.md, {outdir}/{device}_driver.py and the Wireshark dissector {outdir}/{device}.lua")
     return 0
 

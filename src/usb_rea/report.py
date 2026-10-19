@@ -1,6 +1,6 @@
 """Markdown evidence report."""
 from __future__ import annotations
-from .infer import Protocol
+from .infer import Protocol, formula
 from .model import XFER_NAMES
 
 
@@ -53,9 +53,26 @@ def render(proto: Protocol, capture: str = "", sha256: str = "") -> str:
         L.append("")
     if proto.responses:
         L += _responses(proto)
+    if proto.observations:
+        L += _observations(proto)
     if proto.unmatched:
         L += ["## Actions with no host→device data", ""] + [f"- {u}" for u in proto.unmatched] + [""]
     return "\n".join(L)
+
+
+def _observations(proto: Protocol) -> list[str]:
+    obs = proto.observations
+    hit = sum(bool(o["matched"]) for o in obs)
+    L = ["## Observations (what the vendor app showed)", "",
+         f"`seen` markers note a value the vendor app displayed; times are seconds after the first captured "
+         f"packet (Wireshark's `frame.time_relative`). {hit} of {len(obs)} matched a reply byte. A reading is "
+         "only named when every observation of that name near one of its replies fits the same formula; "
+         "an unmatched one had no reply within 1 s, or fits no reading (or several).", "",
+         "| Marker | At | Name | Value | Matched |", "|---|---|---|---|---|"]
+    for o in obs:
+        L.append(f"| {o['label']} | {o['time']:g} s | {o['name']} | {o['value']:g} | "
+                 f"{', '.join(o['matched']) or 'no'} |")
+    return L + [""]
 
 
 def _chan(endpoint: int, xfer_type: int, setup: bytes | None = None) -> str:
@@ -96,6 +113,12 @@ def _responses(proto: Protocol) -> list[str]:
             for f in run:
                 span = f"{f.offset}-{f.offset + f.width - 1}" if f.width > 1 else f"{f.offset}"
                 L.append(f"| {span} | {f.kind} | `{f.describe()}` |")
+        for f in (f for f in r.fields if f.name):
+            span = f"bytes {f.offset}-{f.offset + f.width - 1}" if f.width > 1 else f"byte {f.offset}"
+            L += ["", f"`{f.name}` ({span}, {'u16' + f.endian if f.width == 2 else 'u8'}) = `{formula(f.scale, f.bias)}`, "
+                  f"from {len(f.observed)} observation(s) of the vendor app's display:", "",
+                  "| App showed | Marker at | Raw | Reply frame |", "|---|---|---|---|"]
+            L += [f"| {f.name} {v:g} | {t:g} s | {raw} | {fr} |" for v, raw, fr, t in f.observed[:8]]
         shown = r.samples[:8]
         L += ["", "Evidence" + (f" (first {len(shown)} of {r.answered}):" if r.answered > len(shown) else ":"), "",
               "| Action | Query frame | Reply | Reply frame |", "|---|---|---|---|"]

@@ -12,19 +12,21 @@ between a command and the command's reply does not steal it.
 
 Reply bytes are explained with the same machinery as commands (constants, checksums, linear fits
 to label values with the leave-one-out guard), plus echo (repeats a query byte), counter, and
-reading (varies on its own; reported with its observed range, nothing more is claimed).
+reading (varies on its own; reported with its observed range, nothing more is claimed). A reading
+gets a name and a scale when 'seen <name> <value>' markers (what the vendor app displayed) fit it.
 """
 from __future__ import annotations
-from bisect import bisect_right
+from bisect import bisect_left, bisect_right
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from statistics import median
 
-from .infer import Command, Field, _infer_command, _get
+from .infer import Command, Field, _fit_linear, _infer_command, _get
 from .model import Action, Transfer
 
 WINDOW = 0.5  # seconds: a reply later than this is not paired
 MAX_REPLY = 64  # longer IN transfers are bulk data (sectors, frames), not answers to a query
+SEEN_WINDOW = 1.0  # seconds: an observation is compared with replies at most this far away
 
 
 @dataclass
@@ -49,7 +51,7 @@ class Response:
 
     @property
     def explained(self) -> int:
-        return sum(f.width for f in self.fields if f.kind not in ("reading", "unknown"))
+        return sum(f.width for f in self.fields if f.kind not in ("reading", "unknown") or f.name)
 
 
 def is_control_read(t: Transfer) -> bool:
@@ -161,9 +163,11 @@ def _pattern(datas: list[bytes]) -> str:
 
 
 def decode(name: str, source: str, pairs: list, shape: tuple, latency: float,
-           labels: dict[int, str] | None = None, packet: int = 0, driven: set[int] = frozenset()) -> Response:
+           labels: dict[int, str] | None = None, packet: int = 0, driven: set[int] = frozenset(),
+           seen: list[dict] = ()) -> Response:
     """Infer the byte roles of one group's replies. labels: query frame -> action label;
-    driven: query offsets that carry the label value (a reply byte copying those is fitted, not echoed)."""
+    driven: query offsets that carry the label value (a reply byte copying those is fitted, not echoed);
+    seen: observations ('seen rpm 1180' markers, see actions.observations) used to name readings."""
     labels = labels or {}
     got = sorted([(q, r) for q, r in pairs if r is not None], key=lambda p: p[1].frame)
     q0 = got[0][0]
@@ -229,16 +233,19 @@ def decode(name: str, source: str, pairs: list, shape: tuple, latency: float,
     fields = [by_off[k] for k in sorted(by_off)]
     for f in fields:
         f.observed, f.frames = [], f.frames[:20]
-    readings = [f for f in fields if f.kind == "reading"]
+    if seen:
+        fields = name_readings(fields, [r for _, r in got], seen, notes)
+    readings = [f for f in fields if f.kind == "reading" and not f.name]
+    hint = "mark what the vendor app displays (e.g. `usb-rea mark \"seen rpm 1180\"`) to name them"
     if readings:
         where = ("byte " if len(readings) == 1 and readings[0].width == 1 else "bytes ") + ", ".join(
             f"{f.offset}" + (f"-{f.offset + 1}" if f.width == 2 else "") for f in readings)
         if labelled:
             notes.append(f"{where} vary but do not follow the action values; they are listed as readings "
-                         "(meaning unknown, only the observed range is given)")
+                         f"(meaning unknown, only the observed range is given); {hint}")
         else:
             notes.append(f"{where} vary with no label to explain them: listed as readings with their observed "
-                         "range; label actions with the value the vendor app shows (e.g. 'fan 1200') to fit them")
+                         "range; label actions with the value you set (e.g. 'fan 1200') to fit them, or " + hint)
         if any(f.width == 2 for f in readings):
             notes.append("16-bit readings: byte order chosen because that order changes smoothly between replies "
                          "and the other jumps")
@@ -251,6 +258,64 @@ def decode(name: str, source: str, pairs: list, shape: tuple, latency: float,
     payload = _pattern(qdatas) if qdatas and qlen else ""
     return Response(name, source, q0.endpoint, q0.xfer_type, q0.setup, payload, shape[0], shape[1], length,
                     fields, len(got), len(pairs), round(latency * 1000, 1), samples, packet, None, notes)
+
+
+def _tol(v: float) -> float:
+    return max(1.0, 0.01 * abs(v))  # the app rounds what it shows: one unit, or 1% of big numbers
+
+
+def name_readings(fields: list[Field], replies: list[Transfer], seen: list[dict], notes: list[str]) -> list[Field]:
+    """Give readings the names of what the vendor app showed ('seen rpm 1180').
+
+    Each observation is compared with the last reply before it (what the app was showing when the
+    marker was typed) or, failing that, the first one after it, within SEEN_WINDOW; if that does not
+    fit, the other way round. A reading takes the name when it equals every observation of that name
+    (2+ observations, within one unit or 1%), or when a linear raw = value * scale + bias fits them
+    exactly and survives leave-one-out (3+ observations, as for commands). Two neighbouring byte
+    readings are also tried as one 16-bit LE/BE number. A name that fits more than one place is left
+    out, with a note."""
+    rts = [r.ts for r in replies]
+
+    def near(ts, after):
+        i = bisect_left(rts, ts)
+        a = replies[i] if i < len(replies) and rts[i] - ts <= SEEN_WINDOW else None
+        b = replies[i - 1] if i and ts - rts[i - 1] <= SEEN_WINDOW else None
+        return (a or b) if after else (b or a)
+
+    by_name = defaultdict(list)
+    for o in seen:
+        by_name[o["name"]].append(o)
+    for name, obs in by_name.items():
+        free = [f for f in fields if f.kind == "reading" and not f.name]
+        cands = [(f.offset, f.width, f.endian) for f in free] + [
+            (f.offset, 2, e) for f, g in zip(free, free[1:])
+            if f.width == g.width == 1 and g.offset == f.offset + 1 for e in ("le", "be")]
+        exact, fitted = [], []
+        tries = [[(o, r) for o in obs if (r := near(o["ts"], after))] for after in (False, True)]
+        for off, w, end in cands:
+            xy = [([o["value"] for o, _ in pts], [_get(r.data, off, w, end) for _, r in pts], pts) for pts in tries]
+            same = sorted((sum(abs(y - x) for x, y in zip(xs, ys)), i, pts) for i, (xs, ys, pts) in enumerate(xy)
+                          if len(pts) >= 2 and all(abs(y - x) <= _tol(x) for x, y in zip(xs, ys)))
+            fits = [(*fit, pts) for xs, ys, pts in xy
+                    if len(pts) >= 3 and (fit := _fit_linear(xs, ys)) not in (None, (1.0, 0.0))]
+            if same:
+                exact.append((off, w, end, 1.0, 0.0, same[0][2]))  # the closer of the two pairings
+            elif fits:
+                fitted.append((off, w, end, *fits[0]))
+        hits = exact or fitted
+        if len(hits) > 1:
+            where = ", ".join(f"{o}-{o + w - 1} {e}" if w > 1 else f"{o}" for o, w, e, *_ in hits)
+            notes.append(f"'{name}' fits several readings (bytes {where}): left unnamed; "
+                         "note values while they differ more")
+        if len(hits) != 1:
+            continue
+        off, w, end, scale, bias, pts = hits[0]
+        vals = [_get(r.data, off, w, end) for r in replies]
+        f = Field(off, "reading", w, end, scale=scale, bias=bias, limits=(min(vals), max(vals)), name=name,
+                  frames=[r.frame for r in replies][:20],
+                  observed=[(o["value"], _get(r.data, off, w, end), r.frame, o["time"]) for o, r in pts])
+        fields = sorted([x for x in fields if not off <= x.offset < off + w] + [f], key=lambda x: x.offset)
+    return fields
 
 
 def link_command_ids(responses: list[Response], qconsts: dict[str, dict[int, int]]):
@@ -292,8 +357,10 @@ def query_command(name: str, qs: list[Transfer]) -> Command:
     return c
 
 
-def analyze_responses(transfers: list[Transfer], commands: list[Command], background: list[dict]) -> list[Response]:
-    """Find and decode the replies to inferred commands, background polls and control reads."""
+def analyze_responses(transfers: list[Transfer], commands: list[Command], background: list[dict],
+                      seen: list[dict] = ()) -> list[Response]:
+    """Find and decode the replies to inferred commands, background polls and control reads.
+    seen: 'seen <name> <value>' observations (actions.observations) that can name readings."""
     by_frame = {t.frame: t for t in transfers}
     groups: dict[str, list[Transfer]] = {}
     meta: dict[str, tuple] = {}
@@ -333,7 +400,7 @@ def analyze_responses(transfers: list[Transfer], commands: list[Command], backgr
             continue  # one reply per command: the first packet of the transaction that gets one
         used[name] = key
         shape, pairs, lat = paired[key]
-        r = decode(name, source, pairs, shape, lat, labels, j, driven)
+        r = decode(name, source, pairs, shape, lat, labels, j, driven, seen)
         if source == "background":
             r.request = query_command(name, groups[key])
         out.append(r)

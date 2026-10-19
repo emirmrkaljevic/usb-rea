@@ -53,7 +53,7 @@ def build():
 
     @app.tool()
     def mark_action(
-        label: Annotated[str, Field(description="Action label, ideally with a value, e.g. 'brightness 50%' or 'color 255 0 0'")],
+        label: Annotated[str, Field(description="Action label, ideally with a value, e.g. 'brightness 50%' or 'color 255 0 0'; or an observation starting with 'seen', e.g. 'seen rpm 1180 temp 34'")],
         capture: Annotated[str, Field(description="Capture path whose sidecar markers file (<capture>.actions.json) is updated")] = "capture.pcapng",
     ) -> str:
         """Record that the human is about to click this action in the vendor app.
@@ -63,6 +63,10 @@ def build():
         when the next mark arrives. Use the same label stem with different values (brightness 0%,
         50%, 100%) so inference can fit scales. For an already-finished Wireshark capture without
         markers, skip this and pass `labels` to report/diff_actions instead.
+        A label starting with 'seen' ('seen rpm 1180', 'seen rpm 1180 temp 34') is an observation,
+        not an action: what the vendor app displays right now. It does not end the current action
+        and is never diffed; analysis uses it to name and scale the device's reply readings
+        (rpm = raw, temp = (raw - 40) / 2). Mark it when the human reads a value off the screen.
         """
         return json.dumps(append_marker(default_markers(capture), label))
 
@@ -78,7 +82,9 @@ def build():
         The JSON also has `background` (periodic polls set aside) and `responses`: device replies paired
         with the query they answer (command, background poll or GET_REPORT), with byte roles
         (const, echo of a query byte, value fitted to the labels, counter, checksum, or reading with
-        its observed min/max) and query/reply frame numbers.
+        its observed min/max) and query/reply frame numbers. A reading that 'seen' markers explain
+        gets `name`, `scale` and `bias` (raw = value * scale + bias) plus the observations in
+        `observed`; `observations` lists every 'seen' value and which reply bytes it matched.
 
         Read-only analysis: does not write files or talk to hardware. Requires either markers from
         mark_action or `labels` for a finished capture with pauses between clicks. Prefer report
@@ -97,7 +103,8 @@ def build():
         """Generate a Markdown evidence report: every claim links to frame numbers in the capture.
 
         Includes a 'Device responses' section when the device answers queries (status polls,
-        command ACKs, GET_REPORT), saying which reply bytes could not be explained.
+        command ACKs, GET_REPORT), saying which reply bytes could not be explained, and an
+        'Observations' section for 'seen' markers (named readings and unmatched observations).
 
         Read-only: returns Markdown text (does not write a file). Same inputs as diff_actions.
         Use after capture_stop (or on an existing pcap). Choose this over diff_actions when the
@@ -115,7 +122,8 @@ def build():
         """Generate a standalone Python/pyusb driver source for the inferred protocol.
 
         One set_<command>() per command; when the device replies, also query_<name>() methods that
-        send the command/poll (or GET_REPORT), read the reply and return it decoded as a dict.
+        send the command/poll (or GET_REPORT), read the reply and return it decoded as a dict
+        (readings named by 'seen' markers come back scaled, e.g. {'rpm': 1180, 'temp': 34, 'ok': True}).
 
         Read-only analysis that returns driver source as text (does not write a file or open the
         device). Same capture/markers/labels inputs as report. Prefer wireshark_dissector when the

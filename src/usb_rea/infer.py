@@ -3,7 +3,7 @@
 Byte roles: const, command, value (linear, 8/16/32-bit LE/BE), bitfield (packed bits),
 lookup (value->byte table), counter (increments per message), checksum (sum/xor/CRC8/CRC16),
 unknown. Device replies (see responses.py) add echo (copy of a query byte) and reading
-(varies on its own, no label to explain it).
+(varies on its own, no label to explain it; named and scaled when 'seen' markers fit it).
 """
 from __future__ import annotations
 from collections import Counter, defaultdict
@@ -22,7 +22,7 @@ class Field:
     endian: str = "le"
     const: int | None = None
     index: int = 0            # which number of the action label drives this field
-    scale: float | None = None
+    scale: float | None = None   # value/bitfield and named reading: raw = value * scale + bias
     bias: float | None = None
     table: dict | None = None
     step: int | None = None
@@ -33,6 +33,7 @@ class Field:
     bit_width: int | None = None
     echo: int | None = None         # reply byte that repeats this byte of the query
     limits: tuple[int, int] | None = None  # observed min/max of a reading
+    name: str | None = None         # reading named after what the vendor app showed ('seen rpm 1180')
     observed: list = field(default_factory=list)
     frames: list[int] = field(default_factory=list)
 
@@ -58,12 +59,20 @@ class Field:
             return f"counter (+{self.step} per message)"
         if self.kind == "echo":
             return f"= query byte {self.echo}" + (f" (0x{self.const:02x})" if self.const is not None else "")
+        if self.kind == "reading" and self.name:
+            return f"{w or 'u8 '}{self.name} = {formula(self.scale, self.bias)}, seen {self.limits[0]}..{self.limits[1]}"
         if self.kind == "reading":
             return f"{w or 'u8 '}reading, seen {self.limits[0]}..{self.limits[1]}"
         if self.kind == "checksum":
             src = f"packet{self.source + 1}" if self.source is not None else "bytes"
             return f"{w}{self.algo}({src}[{self.covers[0]}:{self.covers[1]}])"
         return "?"
+
+
+def formula(scale: float, bias: float) -> str:
+    """How to get the displayed value back from raw = value * scale + bias."""
+    s = "raw" if not bias else f"(raw {'-' if bias > 0 else '+'} {abs(bias):g})"
+    return s.strip("()") if scale == 1 else f"{s} / {scale:g}"
 
 
 def _put(b: bytearray, f: Field, v: int):
@@ -153,6 +162,7 @@ class Protocol:
     hid: list[dict] = field(default_factory=list)   # filled by pipeline when the capture has HID descriptors
     background: list[dict] = field(default_factory=list)  # periodic polls/keep-alives set aside by the pipeline
     responses: list = field(default_factory=list)  # decoded device replies (responses.Response)
+    observations: list = field(default_factory=list)  # 'seen ...' markers and the reply bytes they named
 
     def to_dict(self):
         d = asdict(self)
