@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "usb-rea"
-version = "0.3.0"
+version = "0.4.0"
 description = "Reverse Engineer any USB gadget: capture, diff, infer, and generate open drivers with evidence"
 readme = "README.md"
 license = "MIT"

@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## v0.4.0 — 2026-10-19
+The device's answers are decoded too, not only what the vendor app sends.
+
 - device responses: each host query (command, background poll, class/vendor control read such as
   GET_REPORT) is paired with the device→host transfer that answers it, and the replies are decoded:
   constants, echoed query bytes (command id, sequence number), counters, checksums, values fitted to
