@@ -4,6 +4,19 @@
 - named readings can be 32-bit: four neighbouring reply readings (or three plus a 0x00 high byte,
   for counters below 2**24) are tried as one u32 LE/BE number, so `seen energy 2.968` or
   `seen uptime 86400` can name an energy counter or uptime; report and driver show `u32le`/`u32be`
+- named modes / enum values: a `seen` value that is a word (`seen mode silent`, `seen profile gaming`;
+  last in the marker or before a comma) is kept as text. A name seen as 2+ different words in 3+
+  observations is matched to the reply byte that has one raw value per word and different values for
+  different words; when other bits of the byte change on their own, or it holds named flags, only the
+  contiguous bits that differ between the words are taken (`bits[4:6] profile: …`). Both bytes of an
+  unnamed u16 reading are tried as well. Ambiguous modes and names seen both as numbers and as words
+  are left unnamed with a note. Report: `mode: 0x00 = silent, 0x02 = turbo` with an evidence table
+  that shows every word; JSON/MCP fields gain `table` (raw → word); `query_<name>()` returns the word,
+  or the raw number for a value never seen
+- signed readings: when the app showed a negative value (`seen temp -5`), 8/16-bit readings whose top
+  bit gets set are also tried as two's complement (`i8`, `i16le`/`i16be`; field `signed`)
+- synthetic fan with `observe=True`: the status reply's spare byte reports the current mode
+  (`auto`/`silent`/`balanced`/`turbo`) and the markers note it, so `usb-rea demo --device fan` names it
 
 ## v0.5.0 — 2026-10-20
 Readings and status flags get the names the vendor app shows for them.

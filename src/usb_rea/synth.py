@@ -5,7 +5,8 @@ Devices (VID 0x1234 / PID 0xABCD):
   fan  — 5A <seq> <cmd> <args> pad + CRC16/MODBUS; 16-bit BE RPM, RGB, lookup.
          Replies A5 <cmd> <seq> <arg u16 LE> <sum8>; with poll > 0 it is asked for its status and
          answers A5 40 <current RPM u16 LE> <temperature °C> 00 <sum8>; with observe=True the
-         markers also note what the vendor app showed now and then ('seen rpm 1186 temp 39')
+         00 byte reports the current mode (00 auto until a 'mode N' command, then that mode's byte)
+         and the markers note what the vendor app showed now and then ('seen rpm 1186 temp 39 mode auto')
   dial — A5 <cmd> <args> <sum8>; 32-bit LE position + 4-bit level bitfield
 """
 from __future__ import annotations
@@ -93,6 +94,7 @@ LAMP_HID_DESCRIPTOR = bytes.fromhex(
 
 
 FAN_MODES = {1: 0x11, 2: 0x22, 3: 0x47}
+FAN_MODE_NAMES = {0x00: "auto", 0x11: "silent", 0x22: "balanced", 0x47: "turbo"}   # what the vendor app shows
 FAN_ACTIONS = ["fan 800", "fan 1200", "fan 2650", "fan 4000", "color 255 0 0", "color 0 128 255",
                "color 10 20 30", "mode 1", "mode 2", "mode 3"]
 
@@ -126,8 +128,8 @@ def fan_reply(msg: bytes, values: list[float]) -> bytes:
     return body + bytes([sum(body) & 0xFF])
 
 
-def fan_status(rpm: int, temp: int) -> bytes:
-    body = bytes([0xA5, 0x40]) + rpm.to_bytes(2, "little") + bytes([temp, 0x00])
+def fan_status(rpm: int, temp: int, mode: int = 0x00) -> bytes:
+    body = bytes([0xA5, 0x40]) + rpm.to_bytes(2, "little") + bytes([temp, mode])
     return body + bytes([sum(body) & 0xFF])
 
 
@@ -165,7 +167,9 @@ def make_capture(path, actions: list[str] | None = None, transport: str = "bulk"
     poll_seq: the lamp's status request carries a sequence byte (and so a changing checksum),
     which the reply echoes.
     observe: (fan with poll) every 5th status reply is also noted as an observation marker
-    'seen rpm N temp T', 60 ms after the reply, as if the user read the vendor app's screen.
+    'seen rpm N temp T mode M', 60 ms after the reply, as if the user read the vendor app's screen;
+    the status reply then also carries the current mode byte (see FAN_MODE_NAMES), and the first
+    reply after a mode change is noted as 'seen mode M'.
 
     device: 'lamp' (see module doc), 'fan' (counter + 16-bit BE + RGB + lookup + CRC16),
     or 'dial' (32-bit LE position + 4-bit brightness bitfield + sum8).
@@ -187,6 +191,7 @@ def make_capture(path, actions: list[str] | None = None, transport: str = "bulk"
     marks = []
     seq = 0x40
     targets = [(0.0, 1000)]   # fan: (time, set RPM), for the status replies
+    modes = [(0.0, 0x00)]     # fan: (time, mode byte), reported in the status replies with observe
     for label in actions:
         start = t
         if noise:
@@ -209,6 +214,8 @@ def make_capture(path, actions: list[str] | None = None, transport: str = "bulk"
             w.in_(t + 0.31, 0x81, fan_reply(msg, split_values(label)[1]))
             if msg[2] == 0x10:
                 targets.append((t + 0.3, int(split_values(label)[1][0])))
+            elif msg[2] == 0x30:
+                modes.append((t + 0.3, msg[3]))
         else:
             w.in_(t + 0.31, 0x81, bytes([0x55, msg[1], 0x00]))
         t += 1.0
@@ -221,6 +228,7 @@ def make_capture(path, actions: list[str] | None = None, transport: str = "bulk"
             status = fan_status_query()
             sensor = random.Random(seed + 1)
             temp = 38
+            shown = 0x00
         tp = 1_760_000_000.0 + 0.05
         n = 0
         while tp < t:
@@ -234,9 +242,14 @@ def make_capture(path, actions: list[str] | None = None, transport: str = "bulk"
                 target = [r for ts_, r in targets if ts_ <= at][-1]
                 temp = min(45, max(35, temp + sensor.choice((-1, 0, 0, 1))))
                 rpm = target + sensor.randint(-12, 12)
-                reply = fan_status(rpm, temp)
+                mode = [m for ts_, m in modes if ts_ <= at][-1] if observe else 0x00
+                reply = fan_status(rpm, temp, mode)
                 if observe and n % 5 == 2:
-                    marks.append({"label": f"seen rpm {rpm} temp {temp}", "start": at + 0.07, "end": at + 0.07})
+                    marks.append({"label": f"seen rpm {rpm} temp {temp} mode {FAN_MODE_NAMES[mode]}",
+                                  "start": at + 0.07, "end": at + 0.07})
+                elif observe and mode != shown:   # the user glances at the app after switching modes
+                    marks.append({"label": f"seen mode {FAN_MODE_NAMES[mode]}", "start": at + 0.07, "end": at + 0.07})
+                shown = mode
                 n += 1
             if transport == "control":
                 w.control_out(at, bytes([0x21, 0x09, 0x00, 0x02, 0, 0, len(status), 0]), status)

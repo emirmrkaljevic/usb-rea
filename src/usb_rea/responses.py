@@ -13,7 +13,8 @@ between a command and the command's reply does not steal it.
 Reply bytes are explained with the same machinery as commands (constants, checksums, linear fits
 to label values with the leave-one-out guard), plus echo (repeats a query byte), counter, and
 reading (varies on its own; reported with its observed range, nothing more is claimed). A reading
-gets a name and a scale when 'seen <name> <value>' markers (what the vendor app displayed) fit it.
+gets a name and a scale when 'seen <name> <value>' markers (what the vendor app displayed) fit it,
+and a value -> label map when the app showed words ('seen mode turbo').
 """
 from __future__ import annotations
 from bisect import bisect_left, bisect_right
@@ -274,10 +275,12 @@ def name_readings(fields: list[Field], replies: list[Transfer], seen: list[dict]
     (2+ observations, within one unit or 1%), or when a linear raw = value * scale + bias fits them
     exactly and survives leave-one-out (3+ observations, as for commands). Two neighbouring byte
     readings are also tried as one 16-bit LE/BE number, and four (or three plus a 0x00 high byte) as one
-    32-bit LE/BE number, e.g. energy counters or uptime. A name only ever seen as on/off ('seen pump
-    on', 'seen pump off') is a status flag: it takes the one bit of a byte reading that is 1 exactly
-    when the app showed 'on' (see name_flag). A name that fits more than one place is left out, with
-    a note."""
+    32-bit LE/BE number, e.g. energy counters or uptime. When the app showed a negative value ('seen
+    temp -5'), 8/16-bit readings are also tried as signed (two's complement) numbers. A name only ever
+    seen as on/off ('seen pump on', 'seen pump off') is a status flag: it takes the one bit of a byte
+    reading that is 1 exactly when the app showed 'on' (see name_flag); one seen as words ('seen mode
+    silent', 'seen mode turbo') is a mode with one raw value per word (see name_mode). A name that
+    fits more than one place is left out, with a note."""
     rts = [r.ts for r in replies]
 
     def near(ts, after):
@@ -289,9 +292,18 @@ def name_readings(fields: list[Field], replies: list[Transfer], seen: list[dict]
     by_name = defaultdict(list)
     for o in seen:
         by_name[o["name"]].append(o)
-    for name, obs in by_name.items():
+    # words last: a mode may share its byte with on/off flags, which are named first
+    for name, obs in sorted(by_name.items(), key=lambda kv: any(isinstance(o["value"], str) for o in kv[1])):
+        tries = [[(o, r) for o in obs if (r := near(o["ts"], after))] for after in (False, True)]
+        words = {isinstance(o["value"], str) for o in obs}
+        if len(words) > 1:
+            notes.append(f"'{name}' was seen both as a number and as a word: left unnamed; "
+                         "use one kind of value per name")
+            continue
+        if words == {True}:
+            fields = name_mode(name, fields, replies, tries, notes)
+            continue
         if {o["value"] for o in obs} == {0.0, 1.0}:
-            tries = [[(o, r) for o in obs if (r := near(o["ts"], after))] for after in (False, True)]
             fields = name_flag(name, fields, replies, tries, notes)
             continue
         free = [f for f in fields if f.kind == "reading" and not f.name]
@@ -299,39 +311,49 @@ def name_readings(fields: list[Field], replies: list[Transfer], seen: list[dict]
             (f.offset, 2, e) for f, g in zip(free, free[1:])
             if f.width == g.width == 1 and g.offset == f.offset + 1 for e in ("le", "be")] + [
             (off, 4, e) for off, e in _u32_spans(fields)]
+        # a negative value on screen: 8/16-bit readings whose top bit gets set may be two's complement
+        cands = [(*c, False) for c in cands] + [
+            (*c, True) for c in cands if c[1] <= 2 and min(o["value"] for o in obs) < 0
+            and any(_get(r.data, c[0], c[1], c[2], True) < 0 for r in replies)]
         exact, fitted = [], []
-        tries = [[(o, r) for o in obs if (r := near(o["ts"], after))] for after in (False, True)]
-        for off, w, end in cands:
-            xy = [([o["value"] for o, _ in pts], [_get(r.data, off, w, end) for _, r in pts], pts) for pts in tries]
+        for off, w, end, sg in cands:
+            xy = [([o["value"] for o, _ in pts], [_get(r.data, off, w, end, sg) for _, r in pts], pts) for pts in tries]
             same = sorted((sum(abs(y - x) for x, y in zip(xs, ys)), i, pts) for i, (xs, ys, pts) in enumerate(xy)
                           if len(pts) >= 2 and all(abs(y - x) <= _tol(x) for x, y in zip(xs, ys)))
             fits = [(*fit, pts) for xs, ys, pts in xy
                     if len(pts) >= 3 and (fit := _fit_linear(xs, ys)) not in (None, (1.0, 0.0))]
             if same:
-                exact.append((off, w, end, 1.0, 0.0, same[0][2]))  # the closer of the two pairings
+                exact.append((off, w, end, sg, 1.0, 0.0, same[0][2]))  # the closer of the two pairings
             elif fits:
-                fitted.append((off, w, end, *fits[0]))
+                fitted.append((off, w, end, sg, *fits[0]))
         hits = exact or fitted
         if len(hits) > 1:
-            where = ", ".join(f"{o}-{o + w - 1} {e}" if w > 1 else f"{o}" for o, w, e, *_ in hits)
+            where = ", ".join((f"{o}-{o + w - 1} {e}" if w > 1 else f"{o}") + (" signed" if sg else "")
+                              for o, w, e, sg, *_ in hits)
             notes.append(f"'{name}' fits several readings (bytes {where}): left unnamed; "
                          "note values while they differ more")
         if len(hits) != 1:
             continue
-        off, w, end, scale, bias, pts = hits[0]
-        vals = [_get(r.data, off, w, end) for r in replies]
+        off, w, end, sg, scale, bias, pts = hits[0]
+        vals = [_get(r.data, off, w, end, sg) for r in replies]
         f = Field(off, "reading", w, end, scale=scale, bias=bias, limits=(min(vals), max(vals)), name=name,
-                  frames=[r.frame for r in replies][:20],
-                  observed=[(o["value"], _get(r.data, off, w, end), r.frame, o["time"]) for o, r in pts])
+                  signed=sg, frames=[r.frame for r in replies][:20],
+                  observed=[(o["value"], _get(r.data, off, w, end, sg), r.frame, o["time"]) for o, r in pts])
         fields = sorted([x for x in fields if not off <= x.offset < off + w] + [f], key=lambda x: x.offset)
-    for off in sorted({f.offset for f in fields if f.bit_width == 1 and f.name}):
+    for off in sorted({f.offset for f in fields if f.bit_width and f.name}):
         rest = 0
         for a, b in zip(replies, replies[1:]):
             rest |= a.data[off] ^ b.data[off]
-        rest &= ~sum(1 << f.bit_offset for f in fields if f.offset == off and f.bit_width == 1) & 0xFF
+        rest &= ~_named_bits(fields, off) & 0xFF
         if rest:
-            notes.append(f"byte {off}: bits other than the named flags also change (mask 0x{rest:02x}); not described")
+            notes.append(f"byte {off}: bits other than the named ones also change (mask 0x{rest:02x}); not described")
     return fields
+
+
+def _named_bits(fields: list[Field], off: int) -> int:
+    """Mask of the bits of byte `off` already taken by named flags and modes."""
+    return sum(((1 << f.bit_width) - 1) << f.bit_offset for f in fields
+               if f.offset == off and f.name and f.bit_width)
 
 
 def _u32_spans(fields: list[Field]) -> list[tuple[int, str]]:
@@ -362,12 +384,11 @@ def name_flag(name: str, fields: list[Field], replies: list[Transfer], tries: li
     """Status flag ('seen pump on' / 'seen pump off'): the bit of a byte reading that is 1 every time
     the app showed on and 0 every time it showed off (both states must be seen). Several flags can share
     a byte; a bit that is not alone in fitting (two bits that always flip together) is left unnamed."""
-    taken = {(f.offset, f.bit_offset) for f in fields if f.name and f.bit_width == 1}
-    offs = sorted({f.offset for f in fields if f.kind == "reading" and f.width == 1 and (not f.name or f.bit_width == 1)})
+    offs = sorted({f.offset for f in fields if f.kind == "reading" and f.width == 1 and (not f.name or f.bit_width)})
     hits = []
     for off in offs:
         for bit in range(8):
-            if (off, bit) in taken:
+            if _named_bits(fields, off) >> bit & 1:
                 continue
             pts = next((pts for pts in tries if {o["value"] for o, _ in pts} == {0.0, 1.0}
                         and all((r.data[off] >> bit) & 1 == o["value"] for o, r in pts)), None)
@@ -384,6 +405,69 @@ def name_flag(name: str, fields: list[Field], replies: list[Transfer], tries: li
               observed=[(o["value"], (r.data[off] >> bit) & 1, r.frame, o["time"]) for o, r in pts])
     return sorted([x for x in fields if not (x.offset == off and not x.name)] + [f],
                   key=lambda x: (x.offset, x.bit_offset or 0))
+
+
+def name_mode(name: str, fields: list[Field], replies: list[Transfer], tries: list, notes: list[str]) -> list[Field]:
+    """Mode or other enum value ('seen mode silent', 'seen mode turbo', 'seen profile gaming'): a byte
+    reading whose raw value is the same every time the app showed one word and differs between words.
+    Needs 2+ different words and 3+ observations, so at least one word is seen twice and could have
+    disagreed. When the whole byte does not give one value per word (other bits change on their own),
+    or it holds named flags, only the bits that differ between the words are tried (one contiguous
+    group, e.g. bits[4:6]). Both bytes of an unnamed 16-bit reading are tried too (a rarely changing
+    mode byte next to a drifting one looks like one u16), and the other byte becomes a u8 reading again.
+    A mode that fits more than one place is left unnamed, with a note."""
+    offs = sorted({f.offset for f in fields if f.kind == "reading" and f.width == 1 and (not f.name or f.bit_width)}
+                  | {o for f in fields if f.kind == "reading" and f.width == 2 and not f.name
+                     for o in (f.offset, f.offset + 1)})
+    hits = []
+    for off in offs:
+        used = _named_bits(fields, off)
+        for pts in tries:
+            if len(pts) < 3 or len({o["value"] for o, _ in pts}) < 2:
+                continue
+            raws = [r.data[off] & ~used for _, r in pts]
+            diff = 0
+            for x in raws:
+                diff |= x ^ raws[0]
+            if not diff:
+                continue
+            lo, bw = (diff & -diff).bit_length() - 1, diff.bit_length() - (diff & -diff).bit_length() + 1
+            mask = ((1 << bw) - 1) << lo
+            if mask & used:
+                continue
+            # the whole byte first (other bits may still change between modes); if it is not one value
+            # per word, or the byte holds named flags, only the bits that differ between the words
+            for group in ((False, True) if not used else (True,)):
+                table: dict[int, str] = {}
+                if all(table.setdefault((x >> lo) & ((1 << bw) - 1) if group else x, o["value"]) == o["value"]
+                       for x, (o, _) in zip(raws, pts)) and len(table) == len({o["value"] for o, _ in pts}):
+                    break
+            else:
+                continue
+            hits.append((off, (lo, bw) if group else (None, None), table, pts))
+            break
+    if len(hits) > 1:
+        where = ", ".join(f"byte {o}" + (f" bits[{bo}:{bo + bw}]" if bo is not None else "") for o, (bo, bw), _, _ in hits)
+        words = ", ".join(sorted({o["value"] for pts in tries for o, _ in pts}))
+        notes.append(f"'{name}' ({words}) fits several places ({where}): left unnamed; "
+                     "note it while other readings differ")
+    if len(hits) != 1:
+        return fields
+    off, (bo, bw), table, pts = hits[0]
+    get = (lambda d: d[off]) if bo is None else (lambda d: (d[off] >> bo) & ((1 << bw) - 1))
+    vals = [get(r.data) for r in replies]
+    f = Field(off, "reading", 1, "le", limits=(min(vals), max(vals)), name=name, table=dict(sorted(table.items())),
+              bit_offset=bo, bit_width=bw, frames=[r.frame for r in replies][:20],
+              observed=[(o["value"], get(r.data), r.frame, o["time"]) for o, r in pts])
+    rest = []
+    for x in fields:
+        if x.kind == "reading" and not x.name and x.width == 2 and x.offset <= off <= x.offset + 1:
+            other = x.offset + (off == x.offset)   # the byte of the u16 reading that is not the mode
+            vals = [r.data[other] for r in replies]
+            rest.append(Field(other, "reading", limits=(min(vals), max(vals)), frames=x.frames))
+        elif not (x.offset == off and not x.name):
+            rest.append(x)
+    return sorted(rest + [f], key=lambda x: (x.offset, x.bit_offset or 0))
 
 
 def link_command_ids(responses: list[Response], qconsts: dict[str, dict[int, int]]):

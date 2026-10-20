@@ -93,19 +93,25 @@ def is_observation(label: str) -> bool:
     return bool(re.match(r"\s*seen\b", label, re.I))
 
 
-def split_observation(label: str) -> list[tuple[str, float]]:
+def split_observation(label: str) -> list[tuple[str, float | str]]:
     """'seen rpm 1180, temp 34°C' -> [('rpm', 1180.0), ('temp', 34.0)]; [] for other labels.
-    On/off states count as 1/0: 'seen pump on, alarm off' -> [('pump', 1.0), ('alarm', 0.0)]."""
+    On/off states count as 1/0: 'seen pump on, alarm off' -> [('pump', 1.0), ('alarm', 0.0)].
+    A word as the last of two or more words of a part is a mode or other enum value, kept as text:
+    'seen mode turbo' -> [('mode', 'turbo')], 'seen rpm 1180 fan mode quiet' -> [..., ('fan mode', 'quiet')]."""
     import re
     if not is_observation(label):
         return []
-    out, name = [], []
-    for t in re.split(r"[\s,=:;]+", label.strip()[4:]):
-        v = re.fullmatch(r"(-?\d+(?:\.\d+)?)(?:%|°?[a-zA-Z]{0,3})", t)
-        state = {"on": 1.0, "off": 0.0, "true": 1.0, "false": 0.0, "yes": 1.0, "no": 0.0}.get(t.lower())
-        if (v or state is not None) and name:
-            out.append((" ".join(name).lower(), float(v.group(1)) if v else state))
-            name = []
-        elif t and not v:
-            name.append(t)
+    out = []
+    for part in re.split(r"[,;]+", label.strip()[4:]):
+        name = []
+        for t in re.split(r"[\s=:]+", part.strip()):
+            v = re.fullmatch(r"(-?\d+(?:\.\d+)?)(?:%|°?[a-zA-Z]{0,3})", t)
+            state = {"on": 1.0, "off": 0.0, "true": 1.0, "false": 0.0, "yes": 1.0, "no": 0.0}.get(t.lower())
+            if (v or state is not None) and name:
+                out.append((" ".join(name).lower(), float(v.group(1)) if v else state))
+                name = []
+            elif t and not v:
+                name.append(t)
+        if len(name) >= 2:
+            out.append((" ".join(name[:-1]).lower(), name[-1].lower()))
     return out

@@ -70,9 +70,24 @@ def _observations(proto: Protocol) -> list[str]:
          "an unmatched one had no reply within 1 s, or fits no reading (or several).", "",
          "| Marker | At | Name | Value | Matched |", "|---|---|---|---|---|"]
     for o in obs:
-        L.append(f"| {o['label']} | {o['time']:g} s | {o['name']} | {o['value']:g} | "
+        L.append(f"| {o['label']} | {o['time']:g} s | {o['name']} | {_shown(o['value'])} | "
                  f"{', '.join(o['matched']) or 'no'} |")
     return L + [""]
+
+
+def _evidence(f) -> list:
+    """Up to 8 observations; for a mode, the first of every label is always among them."""
+    if f.table is None:
+        return f.observed[:8]
+    first = {}
+    for x in f.observed:
+        first.setdefault(x[0], x)
+    keep = list(first.values()) + [x for x in f.observed if x not in first.values()]
+    return sorted(keep[:max(8, len(first))], key=lambda x: x[3])
+
+
+def _shown(v) -> str:
+    return v if isinstance(v, str) else f"{v:g}"
 
 
 def _chan(endpoint: int, xfer_type: int, setup: bytes | None = None) -> str:
@@ -115,13 +130,21 @@ def _responses(proto: Protocol) -> list[str]:
                 L.append(f"| {span} | {f.kind} | `{f.describe()}` |")
         for f in (f for f in r.fields if f.name):
             span = f"bytes {f.offset}-{f.offset + f.width - 1}" if f.width > 1 else f"byte {f.offset}"
-            what = (f"(byte {f.offset}, bit {f.bit_offset}) is on when the bit is 1" if f.bit_width == 1 else
-                    f"({span}, {f'u{8 * f.width}' + f.endian if f.width > 1 else 'u8'}) = `{formula(f.scale, f.bias)}`")
+            kind = f"{'iu'[not f.signed]}{8 * f.width}" + (f.endian if f.width > 1 else "")
+            if f.table is not None:
+                bits = f", bits {f.bit_offset}-{f.bit_offset + f.bit_width - 1}" if f.bit_width else ""
+                what = (f"(byte {f.offset}{bits}) is a mode, one raw value per label the app showed: `"
+                        + ", ".join(f"0x{k:02x} = {v}" for k, v in f.table.items()) + "`")
+            elif f.bit_width == 1:
+                what = f"(byte {f.offset}, bit {f.bit_offset}) is on when the bit is 1"
+            else:
+                what = f"({span}, {kind}) = `{formula(f.scale, f.bias)}`"
             L += ["", f"`{f.name}` {what}, "
                   f"from {len(f.observed)} observation(s) of the vendor app's display:", "",
                   "| App showed | Marker at | Raw | Reply frame |", "|---|---|---|---|"]
-            L += [f"| {f.name} {('off', 'on')[int(v)] if f.bit_width == 1 else f'{v:g}'} | {t:g} s | {raw} | {fr} |"
-                  for v, raw, fr, t in f.observed[:8]]
+            L += [f"| {f.name} {('off', 'on')[int(v)] if f.bit_width == 1 else _shown(v)} | {t:g} s | "
+                  f"{f'0x{raw:02x}' if f.table is not None else raw} | {fr} |"
+                  for v, raw, fr, t in _evidence(f)]
         shown = r.samples[:8]
         L += ["", "Evidence" + (f" (first {len(shown)} of {r.answered}):" if r.answered > len(shown) else ":"), "",
               "| Action | Query frame | Reply | Reply frame |", "|---|---|---|---|"]

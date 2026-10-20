@@ -67,7 +67,9 @@ def build():
         not an action: what the vendor app displays right now. It does not end the current action
         and is never diffed; analysis uses it to name and scale the device's reply readings
         (rpm = raw, temp = (raw - 40) / 2). Mark it when the human reads a value off the screen.
-        On/off states ('seen pump on', 'seen pump off, alarm on') name single status-flag bits.
+        On/off states ('seen pump on', 'seen pump off, alarm on') name single status-flag bits; words
+        ('seen mode silent', 'seen mode turbo, rpm 3900': the word last or before a comma) name a mode
+        byte with a value -> word map; negative values ('seen temp -5') allow signed i8/i16 readings.
         """
         return json.dumps(append_marker(default_markers(capture), label))
 
@@ -84,8 +86,9 @@ def build():
         with the query they answer (command, background poll or GET_REPORT), with byte roles
         (const, echo of a query byte, value fitted to the labels, counter, checksum, or reading with
         its observed min/max) and query/reply frame numbers. A reading that 'seen' markers explain
-        gets `name`, `scale` and `bias` (raw = value * scale + bias) plus the observations in
-        `observed`; `observations` lists every 'seen' value and which reply bytes it matched.
+        gets `name`, `scale` and `bias` (raw = value * scale + bias, `signed` for i8/i16) plus the
+        observations in `observed`; a named mode has `table` (raw value -> word the app showed);
+        `observations` lists every 'seen' value and which reply bytes it matched.
 
         Read-only analysis: does not write files or talk to hardware. Requires either markers from
         mark_action or `labels` for a finished capture with pauses between clicks. Prefer report
@@ -124,7 +127,8 @@ def build():
 
         One set_<command>() per command; when the device replies, also query_<name>() methods that
         send the command/poll (or GET_REPORT), read the reply and return it decoded as a dict
-        (readings named by 'seen' markers come back scaled, e.g. {'rpm': 1180, 'temp': 34, 'ok': True}).
+        (readings named by 'seen' markers come back scaled and modes as words, e.g.
+        {'rpm': 1180, 'temp': 34, 'mode': 'turbo', 'ok': True}).
 
         Read-only analysis that returns driver source as text (does not write a file or open the
         device). Same capture/markers/labels inputs as report. Prefer wireshark_dissector when the

@@ -23,7 +23,7 @@ def main(argv=None) -> int:
     c.add_argument("--bus", type=int, default=0)
 
     m = sub.add_parser("mark", help="mark the action you are about to do in the vendor app, "
-                       "or what it shows right now ('seen rpm 1180 temp 34')")
+                       "or what it shows right now ('seen rpm 1180 temp 34', 'seen mode turbo')")
     m.add_argument("label")
     m.add_argument("-m", "--markers", default="capture.pcapng.actions.json")
 
@@ -163,7 +163,7 @@ def _demo(outdir: Path, device: str = "lamp") -> int:
     from .scaffold import generate
     outdir.mkdir(parents=True, exist_ok=True)
     # the fan's vendor app also polls its status, so the demo shows decoded replies too
-    # and the markers note what its screen showed ('seen rpm 1186 temp 39'), which names the readings
+    # and the markers note what its screen showed ('seen rpm 1186 temp 39 mode auto'), which names the readings
     cap, _ = make_capture(outdir / f"{device}.pcap", device=device, poll=0.5 if device == "fan" else 0.0,
                           observe=device == "fan")
     proto = analyze(cap)

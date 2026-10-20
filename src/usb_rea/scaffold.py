@@ -112,6 +112,8 @@ def parse(spec, data, sent=b""):
     for f in spec["fields"]:
         kind, off, w, end = f["kind"], f["offset"], f["width"], f["endian"]
         raw = _get(data, off, w, end)
+        if f.get("signed") and raw >= 1 << (8 * w - 1):  # two's complement (i8/i16)
+            raw -= 1 << (8 * w)
         if kind == "const":
             out["ok"] &= raw == f["const"]
         elif kind == "echo":
@@ -124,6 +126,9 @@ def parse(spec, data, sent=b""):
         elif kind == "bitfield":
             bits = (int.from_bytes(data[off:off + w], "little") >> f["bit_offset"]) & ((1 << f["bit_width"]) - 1)
             out[f["name"]] = (bits - f["bias"]) / f["scale"]
+        elif kind == "reading" and "table" in f:  # mode: the label the vendor app showed for this value
+            v = (data[off] >> f["bit_offset"]) & ((1 << f["bit_width"]) - 1) if "bit_width" in f else raw
+            out[f["name"]] = f["table"].get(v, v)
         elif kind == "reading" and "bit_width" in f:  # on/off status flag
             out[f["name"]] = bool((data[off] >> f["bit_offset"]) & 1)
         elif kind == "reading" and "scale" in f:  # named after what the vendor app showed
@@ -185,7 +190,8 @@ def generate(proto: Protocol) -> str:
                 name = f"{f.kind}_{f.offset}"
             d = dict(kind=f.kind, name=name, offset=f.offset, width=f.width, endian=f.endian,
                      const=f.const, echo=f.echo, scale=f.scale, bias=f.bias, algo=f.algo,
-                     covers=f.covers, bit_offset=f.bit_offset, bit_width=f.bit_width)
+                     covers=f.covers, bit_offset=f.bit_offset, bit_width=f.bit_width,
+                     signed=f.signed or None, table=f.table if f.kind == "reading" else None)
             fields.append({k: v for k, v in d.items() if v is not None})
         return dict(length=r.length, endpoint=r.endpoint, setup=setup, after=r.packet, fields=fields)
 

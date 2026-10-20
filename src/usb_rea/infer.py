@@ -24,7 +24,7 @@ class Field:
     index: int = 0            # which number of the action label drives this field
     scale: float | None = None   # value/bitfield and named reading: raw = value * scale + bias
     bias: float | None = None
-    table: dict | None = None
+    table: dict | None = None      # lookup: value -> byte; named mode reading: raw -> label shown by the app
     step: int | None = None
     algo: str | None = None
     covers: tuple[int, int] | None = None
@@ -34,16 +34,17 @@ class Field:
     echo: int | None = None         # reply byte that repeats this byte of the query
     limits: tuple[int, int] | None = None  # observed min/max of a reading
     name: str | None = None         # reading named after what the vendor app showed ('seen rpm 1180')
+    signed: bool = False            # named reading read as two's complement (i8/i16), e.g. 'seen temp -5'
     observed: list = field(default_factory=list)
     frames: list[int] = field(default_factory=list)
 
     def describe(self) -> str:
         if self.width == 4:
-            w = f"u32{self.endian} "
+            w = f"{'iu'[not self.signed]}32{self.endian} "
         elif self.width == 2:
-            w = f"u16{self.endian} "
+            w = f"{'iu'[not self.signed]}16{self.endian} "
         else:
-            w = ""
+            w = "i8 " if self.signed else ""
         if self.kind in ("const", "command"):
             return f"0x{self.const:02x}"
         if self.kind == "value":
@@ -59,6 +60,9 @@ class Field:
             return f"counter (+{self.step} per message)"
         if self.kind == "echo":
             return f"= query byte {self.echo}" + (f" (0x{self.const:02x})" if self.const is not None else "")
+        if self.kind == "reading" and self.name and self.table is not None:
+            bits = f"bits[{self.bit_offset}:{self.bit_offset + self.bit_width}] " if self.bit_width else ""
+            return f"{bits}{self.name}: " + ", ".join(f"0x{k:02x} = {v}" for k, v in sorted(self.table.items()))
         if self.kind == "reading" and self.name and self.bit_width == 1:
             return f"bit {self.bit_offset}: {self.name} (1 = on)"
         if self.kind == "reading" and self.name:
@@ -82,8 +86,8 @@ def _put(b: bytearray, f: Field, v: int):
     b[f.offset:f.offset + f.width] = v.to_bytes(f.width, "little" if f.endian == "le" else "big")
 
 
-def _get(d: bytes, off: int, width: int, endian: str) -> int:
-    return int.from_bytes(d[off:off + width], "little" if endian == "le" else "big")
+def _get(d: bytes, off: int, width: int, endian: str, signed: bool = False) -> int:
+    return int.from_bytes(d[off:off + width], "little" if endian == "le" else "big", signed=signed)
 
 
 def _put_bits(b: bytearray, f: Field, v: int):

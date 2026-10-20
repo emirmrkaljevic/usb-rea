@@ -26,6 +26,9 @@ def test_parse_observation_labels():
     assert split_observation("Seen RPM=1180, temp 34.5°C") == [("rpm", 1180.0), ("temp", 34.5)]
     assert split_observation("seen fan speed 1180rpm") == [("fan speed", 1180.0)]
     assert split_observation("seen pump on, alarm off") == [("pump", 1.0), ("alarm", 0.0)]
+    assert split_observation("seen mode Turbo") == [("mode", "turbo")]
+    assert split_observation("seen rpm 900 fan mode quiet, led off") == [("rpm", 900.0), ("fan mode", "quiet"), ("led", 0.0)]
+    assert split_observation("seen temp -5°C") == [("temp", -5.0)] and split_observation("seen silent") == []
     assert split_observation("fan 1200") == [] and not is_observation("screen 3") and is_observation("seen")
 
 
@@ -51,7 +54,8 @@ def test_fan_readings_named(tmp_path):
     assert (n["rpm"].offset, n["rpm"].width, n["rpm"].endian, n["rpm"].scale, n["rpm"].bias) == (2, 2, "le", 1.0, 0.0)
     assert (n["temp"].offset, n["temp"].width) == (4, 1) and n["temp"].kind == "reading"
     assert all(raw == v for v, raw, _, _ in n["rpm"].observed) and r.explained == 7
-    assert len(seen.observations) == 12 and all(o["matched"] for o in seen.observations)
+    assert len(seen.observations) == 21 and all(o["matched"] for o in seen.observations)
+    assert n["mode"].offset == 5 and n["mode"].table == {0x00: "auto", 0x11: "silent", 0x22: "balanced", 0x47: "turbo"}
     assert not any("no label to explain" in x for x in r.notes)
     md = render(seen)
     assert "`u16le rpm = raw, seen" in md and "## Observations (what the vendor app showed)" in md
@@ -73,6 +77,11 @@ def test_driver_returns_named_values(tmp_path):
     fake.read.return_value = fan_status(1180, 34)
     out = drv.Device(fake).query_poll_1()
     assert out["rpm"] == 1180 and out["temp"] == 34 and out["ok"] and "reading_2" not in out
+    assert out["mode"] == "auto"
+    fake.read.return_value = fan_status(1180, 34, 0x47)
+    assert drv.Device(fake).query_poll_1()["mode"] == "turbo"
+    fake.read.return_value = fan_status(1180, 34, 0x05)          # never seen: the raw value comes back
+    assert drv.Device(fake).query_poll_1()["mode"] == 5
 
 
 def _report_capture(path, raw_of, shown, n=20, marks=(), delay=0.05):
@@ -201,3 +210,106 @@ def test_flags_need_both_states_and_one_bit(tmp_path):
     extra = lambda i: bytes([(i % 2) | (i % 4 == 3) << 5])  # bit 5 changes too but was never named
     r = _poll(analyze(_report_capture(tmp_path / "e.pcap", extra, {1: "seen pump on", 2: "seen pump off"})))
     assert _named(r)["pump"].bit_offset == 0 and any("mask 0x20" in x for x in r.notes)
+
+
+def _load(src, tmp_path, name):
+    path = tmp_path / f"{name}.py"
+    path.write_text(src)
+    spec = importlib.util.spec_from_file_location(name, path)
+    drv = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(drv)
+    fake = mock.MagicMock()
+    fake.__iter__.return_value = []
+    q = next(m for m in dir(drv.Device) if m.startswith("query_"))
+    return drv, fake, lambda reply: (setattr(fake.ctrl_transfer, "return_value", reply), getattr(drv.Device(fake), q)())[1]
+
+
+def _modes(i):
+    return bytes([0x02 * (i // 5 % 2), 30 + i % 4])        # byte 1: 00 silent / 02 turbo; byte 2: temperature
+
+
+def test_modes_named_from_words(tmp_path):
+    shown = {1: "seen mode silent", 3: "seen mode silent", 6: "seen mode Turbo", 12: "seen mode silent"}
+    p = analyze(_report_capture(tmp_path / "m.pcap", _modes, shown))
+    r = _poll(p)
+    f = _named(r)["mode"]
+    assert (f.offset, f.bit_offset, f.table) == (1, None, {0x00: "silent", 0x02: "turbo"})
+    assert f.describe() == "mode: 0x00 = silent, 0x02 = turbo" and r.explained == 3
+    assert [x[:2] for x in f.observed] == [("silent", 0), ("silent", 0), ("turbo", 2), ("silent", 0)]
+    assert all(o["matched"] == ["GET_REPORT Input 0x03 byte 1"] for o in p.observations)
+    md = render(p)
+    assert "`mode` (byte 1) is a mode, one raw value per label the app showed: `0x00 = silent, 0x02 = turbo`" in md
+    assert "| mode turbo |" in md and "| seen mode Turbo | " in md
+    d = json.loads(json.dumps(p.to_dict(), default=str))
+    assert d["responses"][0]["fields"][1]["table"] == {"0": "silent", "2": "turbo"}
+    src = generate(p)
+    assert "'table': {0: 'silent', 2: 'turbo'}" in src
+    _, _, query = _load(src, tmp_path, "drv_modes")
+    assert query(bytes([0x03, 0x02, 33, 0x00]))["mode"] == "turbo"
+    assert query(bytes([0x03, 0x07, 33, 0x00]))["mode"] == 7      # unknown value: raw int
+
+
+def test_modes_need_two_words_three_times(tmp_path):
+    for shown in ({1: "seen mode silent", 6: "seen mode turbo"},              # each word only once
+                  {1: "seen mode silent", 2: "seen mode silent", 3: "seen mode silent"}):  # one word
+        p = analyze(_report_capture(tmp_path / "n.pcap", _modes, shown))
+        assert not _named(_poll(p)) and not any(o["matched"] for o in p.observations)
+    # a byte that is not the same for every 'silent' is not the mode (temperature drifts)
+    p = analyze(_report_capture(tmp_path / "t.pcap", lambda i: bytes([30 + i % 4]),
+                                {1: "seen mode silent", 2: "seen mode silent", 6: "seen mode turbo"}))
+    assert not _named(_poll(p))
+
+
+def test_mode_bits_beside_a_flag(tmp_path):
+    # byte 1: bit 0 pump (flips every reply), bits 4-5 profile 0 eco / 1 normal / 2 boost, bit 7 always set
+    raw = lambda i: bytes([0x80 | (i % 2) | (i // 5 % 3) << 4])
+    shown = {1: "seen profile eco, pump on", 2: "seen pump off profile eco", 6: "seen profile normal, pump off",
+             11: "seen profile boost, pump on"}
+    p = analyze(_report_capture(tmp_path / "b.pcap", raw, shown))
+    r = _poll(p)
+    n = _named(r)
+    assert n["pump"].bit_offset == 0 and (n["profile"].offset, n["profile"].bit_offset, n["profile"].bit_width) == (1, 4, 2)
+    assert n["profile"].describe() == "bits[4:6] profile: 0x00 = eco, 0x01 = normal, 0x02 = boost"
+    assert not any("bits other than" in x for x in r.notes)
+    assert "byte 1 bits 4-5" in p.observations[0]["matched"][0] and "(byte 1, bits 4-5) is a mode" in render(p)
+    _, _, query = _load(generate(p), tmp_path, "drv_bits")
+    out = query(bytes([0x03, 0xA1, 0x00]))
+    assert out["pump"] is True and out["profile"] == "boost"
+
+
+def test_ambiguous_or_mixed_modes_left_out(tmp_path):
+    two = lambda i: bytes([i // 5 % 2, 0x10 * (i // 5 % 2)])          # bytes 1 and 2 switch together
+    shown = {1: "seen mode a b silent", 2: "seen mode a b silent", 6: "seen mode a b turbo"}
+    r = _poll(analyze(_report_capture(tmp_path / "a.pcap", two, shown)))
+    assert not _named(r) and any("'mode a b' (silent, turbo) fits several places" in x for x in r.notes)
+    # a mode byte (high) next to a drifting temperature (low) is first read as one u16: split again
+    p = analyze(_report_capture(tmp_path / "u.pcap", lambda i: bytes([30 + i % 4, i // 5 % 2]),
+                                {1: "seen mode silent", 3: "seen mode silent", 7: "seen mode turbo"}))
+    r = _poll(p)
+    assert _named(r)["mode"].offset == 2 and _named(r)["mode"].table == {0: "silent", 1: "turbo"}
+    assert [(x.offset, x.kind, x.width, x.limits) for x in r.fields if not x.name][1:] == [(1, "reading", 1, (30, 33)), (3, "const", 1, None)]
+    mixed = {1: "seen mode 0", 2: "seen mode silent", 6: "seen mode turbo"}
+    r = _poll(analyze(_report_capture(tmp_path / "x.pcap", _modes, mixed)))
+    assert not _named(r) and any("both as a number and as a word" in x for x in r.notes)
+
+
+def test_negative_values_read_as_signed(tmp_path):
+    temps = [-12 + (i * 5) % 23 for i in range(20)]                   # -12..10 °C as one i8 byte
+    p = analyze(_report_capture(tmp_path / "s.pcap", lambda i: temps[i].to_bytes(1, "big", signed=True),
+                                {i: f"seen temp {temps[i]}" for i in (1, 4, 9)}))
+    f = _named(_poll(p))["temp"]
+    assert (f.offset, f.width, f.signed, f.limits) == (1, 1, True, (-12, 10)) and f.describe().startswith("i8 temp = raw")
+    assert "(byte 1, i8)" in render(p)
+    _, _, query = _load(generate(p), tmp_path, "drv_i8")
+    assert query(bytes([0x03, 0xFB, 0x00]))["temp"] == -5
+    lows = [-300 + 7 * i + i * i % 5 for i in range(20)]              # i16 BE, all below zero
+    p = analyze(_report_capture(tmp_path / "s16.pcap", lambda i: lows[i].to_bytes(2, "big", signed=True),
+                                {i: f"seen depth {lows[i]}" for i in (2, 9, 15)}))
+    f = _named(_poll(p))["depth"]
+    assert (f.offset, f.width, f.endian, f.signed, f.limits) == (1, 2, "be", True, (-300, max(lows)))
+    assert "i16be depth = raw" in f.describe()
+    # a device that adds a bias instead (raw = value + 40) stays unsigned: the top bit is never set
+    p = analyze(_report_capture(tmp_path / "b.pcap", lambda i: bytes([40 + temps[i]]),
+                                {i: f"seen temp {temps[i]}" for i in (1, 4, 9)}))
+    f = _named(_poll(p))["temp"]
+    assert (f.signed, f.scale, f.bias) == (False, 1.0, 40.0)

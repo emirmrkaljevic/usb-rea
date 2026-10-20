@@ -25,11 +25,11 @@ mode   100%  0x5a | counter (+1 per message) | 0x30 | lookup 1→0x11, 2→0x22,
 
 device replies:
 fan    6/6  0xa5 | = query byte 2 (0x10) | = query byte 1 | u16le round(value * 1 + 0) | sum8(bytes[0:5])
-poll 1 7/7  0xa5 | = query byte 2 (0x40) | u16le rpm = raw, seen 794..4012 | u8 temp = raw, seen 35..38 | 0x00 | sum8(bytes[0:6])
+poll 1 7/7  0xa5 | = query byte 2 (0x40) | u16le rpm = raw, seen 794..4012 | u8 temp = raw, seen 35..38 | mode: 0x00 = auto, 0x11 = silent, 0x22 = balanced, 0x47 = turbo | sum8(bytes[0:6])
 
-12 of 12 'seen' observations matched a reply byte (rpm, temp)
+21 of 21 'seen' observations matched a reply byte (mode, rpm, temp)
 ```
-It writes a synthetic capture of a fan controller (its vendor app also polls the fan's status, and the markers note what the app's screen showed, `seen rpm 1207 temp 37`), recovers the protocol and the replies, names the readings, and writes `report.md` (every claim linked to Wireshark frame numbers) and a working pyusb driver that encodes values it never saw and decodes what the fan answers.
+It writes a synthetic capture of a fan controller (its vendor app also polls the fan's status, and the markers note what the app's screen showed, `seen rpm 1207 temp 37 mode auto`), recovers the protocol and the replies, names the readings and the fan's mode, and writes `report.md` (every claim linked to Wireshark frame numbers) and a working pyusb driver that encodes values it never saw and decodes what the fan answers.
 
 `--device lamp` (default) is a simple 8-bit device; `--device dial` shows 32-bit values and packed bitfields:
 ```
@@ -49,6 +49,8 @@ level        100%  0xa5 | 0x02 | bits[0:4] = round(value * 1 + 0) | 0x00 | sum8(
 | device replies: echoed query bytes, values fitted to labels, readings | status poll → `a5 40 2a 07 26 00 3c` = RPM `u16le` reading, temperature `u8` reading, sum8 |
 | named readings, from what the vendor app shows (`seen rpm 1180`) | bytes 2-3 `u16le rpm = raw`, byte 4 `temp = (raw - 40) / 2` |
 | on/off status flags (`seen pump on`, `seen pump off`) | byte 5 `bit 0: pump (1 = on)` |
+| modes / enum values (`seen mode silent`, `seen mode turbo`) | byte 5 `mode: 0x00 = silent, 0x02 = turbo`, or `bits[4:6] profile: …` beside flags |
+| signed readings, when the app shows negative values (`seen temp -5`) | byte 4 `i8 temp = raw`, bytes 2-3 `i16be …` |
 
 Linear fits must survive leave-one-out cross-checks; otherwise usb-rea falls back to an honest lookup table and says so.
 
@@ -113,10 +115,22 @@ seen both on and off becomes a status flag, the one bit of a reply byte that is 
 said on and 0 every time it said off; several flags can share a byte, and the driver returns
 `{"pump": True, "alarm": False, …}`. Two bits that always flip together are left unnamed, and bits
 of a flag byte that change but were never named are pointed out in the report.
-Limits: only replies (not commands) are named, a name that fits two places is left out, 32-bit and
-multi-bit packed readings are not tried, and display rounding coarser than one unit (e.g. RPM shown in
-steps of 10) only works for the identity, not for a scaled fit. `seen` labels in `--labels` mode have
-no timestamp and are skipped.
+
+Modes and other enum values are words: `mark "seen mode silent"`, `mark "seen profile gaming"` (a
+word value goes last, or before a comma: `seen mode turbo, rpm 3900`). A name seen as 2+ different
+words in 3+ observations becomes a mode: the reply byte whose raw value is the same every time the app
+showed one word and different between words. If other bits of that byte change on their own (or it
+holds named flags), only the bits that differ between the words are taken, e.g. `bits[4:6] profile`.
+The report lists the map (`mode: 0x00 = silent, 0x02 = turbo`) with its evidence, JSON/MCP fields get
+it as `table`, and the driver returns the word, or the raw number for a value never seen:
+`{"mode": "turbo", …}`. When the app shows a negative number (`seen temp -5`), 8- and 16-bit readings
+whose top bit gets set are also tried as signed (`i8`, `i16le`/`i16be`).
+
+Limits: only replies (not commands) are named, a name that fits two places is left out, modes are
+one byte (or one contiguous bit group in it) and only the words you saw get a label, 32-bit readings
+are never signed, multi-bit numeric readings packed beside other bits are not tried, and display
+rounding coarser than one unit (e.g. RPM shown in steps of 10) only works for the identity, not for a
+scaled fit. `seen` labels in `--labels` mode have no timestamp and are skipped.
 
 ## MCP server
 `pip install usb-rea` then add `usb-rea mcp` as a stdio server. Tools: `capture_start`, `capture_stop`, `mark_action`, `diff_actions`, `report`, `scaffold_driver`, `hid_descriptor` (decode a HID report descriptor / report payloads), `wireshark_dissector`, `replay_packet` (refuses unless the human confirmed). Analysis tools accept the same `labels` argument as the CLI for marker-free captures.
@@ -179,6 +193,7 @@ usb-rea hid capture.pcapng --decode "10ff0d1d000000" --type Output
 - [x] device responses: replies to commands, background polls and GET_REPORT decoded, `query_*()` driver methods
 - [x] named readings: `seen rpm 1180` markers name and scale reply readings (identity or linear, 8/16/32-bit)
 - [x] on/off status flags: `seen pump on` / `seen pump off` name single bits of reply bytes
+- [x] modes / enum values (`seen mode turbo`) and signed readings (`seen temp -5`)
 - [ ] state machines (multi-step handshakes)
 
 ## Legal
