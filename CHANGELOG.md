@@ -1,6 +1,9 @@
 # Changelog
 
 ## Unreleased
+- named readings can be 32-bit: four neighbouring reply readings (or three plus a 0x00 high byte,
+  for counters below 2**24) are tried as one u32 LE/BE number, so `seen energy 2.968` or
+  `seen uptime 86400` can name an energy counter or uptime; report and driver show `u32le`/`u32be`
 
 ## v0.5.0 — 2026-10-20
 Readings and status flags get the names the vendor app shows for them.

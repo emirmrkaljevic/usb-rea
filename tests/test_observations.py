@@ -114,6 +114,25 @@ def test_two_byte_readings_combined_as_u16(tmp_path):
         assert [x.offset for x in _poll(p).fields] == [0, 1, 3] and [x[1] for x in f.observed] == [800, 2650, 1500]
 
 
+def test_four_byte_readings_combined_as_u32(tmp_path):
+    ups = [16_900_000 + 3_700_123 * i + (i * i * 977) for i in range(20)]   # uptime: all 4 bytes vary
+    p = analyze(_report_capture(tmp_path / "up.pcap", lambda i: ups[i].to_bytes(4, "little"),
+                                {i: f"seen uptime {ups[i]}" for i in (2, 9, 15)}))
+    f = _named(_poll(p))["uptime"]
+    assert (f.offset, f.width, f.endian, f.scale, f.bias) == (1, 4, "le", 1.0, 0.0)
+    assert [x.offset for x in _poll(p).fields] == [0, 1, 5] and "(bytes 1-4, u32le)" in render(p)
+    # energy in Wh below 2**24 (high byte stays 0x00), shown by the app in kWh: raw = value * 1000
+    wh = [70_000 + 241_000 * i + 1000 * (i * i % 7) for i in range(20)]
+    p = analyze(_report_capture(tmp_path / "e.pcap", lambda i: wh[i].to_bytes(4, "big"),
+                                {i: f"seen energy {wh[i] / 1000:g}" for i in (1, 6, 12)}))
+    f = _named(_poll(p))["energy"]
+    assert (f.offset, f.width, f.endian, f.scale, f.bias) == (1, 4, "be", 1000.0, 0.0)
+    assert f.limits == (70_000, wh[-1])
+    src = generate(p)
+    compile(src, "drv.py", "exec")
+    assert "'name': 'energy', 'offset': 1, 'width': 4, 'endian': 'be'" in src
+
+
 def test_wrong_observations_get_no_name(tmp_path):
     raw = lambda i: bytes([30 + i % 4])
     p = analyze(_report_capture(tmp_path / "w.pcap", raw, {1: "seen temp 70", 6: "seen temp 12", 11: "seen temp 99"}))

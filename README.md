@@ -103,7 +103,9 @@ diffed, and never becomes a command. Each observation is compared with the reply
 every observation of that name (2+ observations, within one unit or 1%), or when a linear
 `raw = value * scale + bias` fits them exactly and survives the same leave-one-out check as commands
 (3+ observations with distinct values). Two neighbouring byte readings are also tried as one 16-bit
-LE/BE number. The report shows the formula with the frames and marker times behind it, and lists
+LE/BE number, and four as one 32-bit LE/BE number (three are enough when the high byte is still
+0x00), so energy counters and uptimes work: `mark "seen energy 2.968"` names bytes 1-4
+`u32be energy = raw / 1000`. The report shows the formula with the frames and marker times behind it, and lists
 observations that matched nothing; the driver returns `{"rpm": 1180, "temp": 34, "ok": True, …}`.
 
 On/off states work too: `mark "seen pump on, alarm off"` (also `true`/`false`, `yes`/`no`). A name
@@ -175,7 +177,7 @@ usb-rea hid capture.pcapng --decode "10ff0d1d000000" --type Output
 - [x] multi-packet transactions (write + apply), including checksums over earlier packets
 - [x] background traffic: periodic status polls / keep-alives are detected and ignored
 - [x] device responses: replies to commands, background polls and GET_REPORT decoded, `query_*()` driver methods
-- [x] named readings: `seen rpm 1180` markers name and scale reply readings (identity or linear, 8/16-bit)
+- [x] named readings: `seen rpm 1180` markers name and scale reply readings (identity or linear, 8/16/32-bit)
 - [x] on/off status flags: `seen pump on` / `seen pump off` name single bits of reply bytes
 - [ ] state machines (multi-step handshakes)
 

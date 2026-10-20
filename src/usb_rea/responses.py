@@ -273,7 +273,8 @@ def name_readings(fields: list[Field], replies: list[Transfer], seen: list[dict]
     fit, the other way round. A reading takes the name when it equals every observation of that name
     (2+ observations, within one unit or 1%), or when a linear raw = value * scale + bias fits them
     exactly and survives leave-one-out (3+ observations, as for commands). Two neighbouring byte
-    readings are also tried as one 16-bit LE/BE number. A name only ever seen as on/off ('seen pump
+    readings are also tried as one 16-bit LE/BE number, and four (or three plus a 0x00 high byte) as one
+    32-bit LE/BE number, e.g. energy counters or uptime. A name only ever seen as on/off ('seen pump
     on', 'seen pump off') is a status flag: it takes the one bit of a byte reading that is 1 exactly
     when the app showed 'on' (see name_flag). A name that fits more than one place is left out, with
     a note."""
@@ -296,7 +297,8 @@ def name_readings(fields: list[Field], replies: list[Transfer], seen: list[dict]
         free = [f for f in fields if f.kind == "reading" and not f.name]
         cands = [(f.offset, f.width, f.endian) for f in free] + [
             (f.offset, 2, e) for f, g in zip(free, free[1:])
-            if f.width == g.width == 1 and g.offset == f.offset + 1 for e in ("le", "be")]
+            if f.width == g.width == 1 and g.offset == f.offset + 1 for e in ("le", "be")] + [
+            (off, 4, e) for off, e in _u32_spans(fields)]
         exact, fitted = [], []
         tries = [[(o, r) for o in obs if (r := near(o["ts"], after))] for after in (False, True)]
         for off, w, end in cands:
@@ -330,6 +332,30 @@ def name_readings(fields: list[Field], replies: list[Transfer], seen: list[dict]
         if rest:
             notes.append(f"byte {off}: bits other than the named flags also change (mask 0x{rest:02x}); not described")
     return fields
+
+
+def _u32_spans(fields: list[Field]) -> list[tuple[int, str]]:
+    """(offset, byte order) of 4-byte windows that could hold one 32-bit reading: unnamed 8/16-bit
+    readings that fill it exactly, or fill three bytes with a constant 0x00 as the high byte (a
+    counter that has not reached 2**24 yet). Needs 3+ varying bytes, so a u16 reading next to zero
+    padding is never also offered as u32."""
+    at = {f.offset: f for f in fields}
+    out = []
+    for off in sorted(at):
+        free, end = [], off
+        while end in at and end < off + 4:
+            f = at[end]
+            if f.kind == "reading" and not f.name and not f.bit_width:
+                free += range(end, end + f.width)
+            elif not (f.kind == "const" and f.const == 0 and f.width == 1):
+                break
+            end += f.width
+        if end != off + 4 or len(free) < 3:
+            continue
+        for e, high in (("le", off + 3), ("be", off)):
+            if len(free) == 4 or high not in free:
+                out.append((off, e))
+    return out
 
 
 def name_flag(name: str, fields: list[Field], replies: list[Transfer], tries: list, notes: list[str]) -> list[Field]:
