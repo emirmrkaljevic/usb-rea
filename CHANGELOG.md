@@ -1,6 +1,10 @@
 # Changelog
 
 ## Unreleased
+
+## v0.5.0 — 2026-10-20
+Readings and status flags get the names the vendor app shows for them.
+
 - named readings: `usb-rea mark "seen rpm 1180 temp 34"` notes what the vendor app displays. These
   observation markers never become actions or affect diffing/segmentation; they are matched to the
   reply just before (or after) them, and a reply reading that equals them (identity) or fits

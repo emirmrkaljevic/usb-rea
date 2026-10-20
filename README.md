@@ -11,7 +11,7 @@
 
 Got a USB device that only ships a Windows vendor app (case LCD, RGB controller, mouse, "smart" lamp)? Click around in the vendor app while **usb-rea** captures the USB traffic (usbmon on Linux, USBPcap on Windows), diffs the packets per action, infers the protocol, and writes an open-source Python/libusb driver — with every conclusion linked to the exact packets that prove it.
 
-> Status: alpha (v0.4.0, [on PyPI](https://pypi.org/project/usb-rea/)). Validated on synthetic devices, on protocols documented by liquidctl and rivalcfg, and on public Wireshark captures — see [docs/VALIDATION.md](docs/VALIDATION.md). Not yet tested on a physical gadget: your captures are welcome.
+> Status: alpha (v0.5.0, [on PyPI](https://pypi.org/project/usb-rea/)). Validated on synthetic devices, on protocols documented by liquidctl and rivalcfg, and on public Wireshark captures — see [docs/VALIDATION.md](docs/VALIDATION.md). Not yet tested on a physical gadget: your captures are welcome.
 
 ## Try it in 10 seconds (no hardware needed)
 ```bash
