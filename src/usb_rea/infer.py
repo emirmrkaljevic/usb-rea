@@ -343,7 +343,7 @@ def _bit_run(cols: list[int], nbits: int = 8) -> tuple[int, int, int] | None:
     hi = xor_all.bit_length() - 1
     bw = hi - lo + 1
     if bin(xor_all).count("1") != bw:
-        return None  # gaps — not a single packed field
+        return None  # gaps, not a single packed field
     mask = ((1 << bw) - 1) << lo
     outside = ((1 << nbits) - 1) ^ mask
     if len({c & outside for c in cols}) != 1:

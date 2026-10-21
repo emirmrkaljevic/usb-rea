@@ -1,13 +1,13 @@
 """Synthetic usbmon captures with known ground truth, for tests and demos.
 
 Devices (VID 0x1234 / PID 0xABCD):
-  lamp — bulk/HID: AA <cmd> <arg> 00 <sum8>; brightness/power/hue (8-bit)
-  fan  — 5A <seq> <cmd> <args> pad + CRC16/MODBUS; 16-bit BE RPM, RGB, lookup.
+  lamp: bulk/HID: AA <cmd> <arg> 00 <sum8>; brightness/power/hue (8-bit)
+  fan:  5A <seq> <cmd> <args> pad + CRC16/MODBUS; 16-bit BE RPM, RGB, lookup.
          Replies A5 <cmd> <seq> <arg u16 LE> <sum8>; with poll > 0 it is asked for its status and
          answers A5 40 <current RPM u16 LE> <temperature °C> 00 <sum8>; with observe=True the
          00 byte reports the current mode (00 auto until a 'mode N' command, then that mode's byte)
          and the markers note what the vendor app showed now and then ('seen rpm 1186 temp 39 mode auto')
-  dial — A5 <cmd> <args> <sum8>; 32-bit LE position + 4-bit level bitfield
+  dial: A5 <cmd> <args> <sum8>; 32-bit LE position + 4-bit level bitfield
 """
 from __future__ import annotations
 import json

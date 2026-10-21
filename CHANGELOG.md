@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-## v0.6.0 — 2026-10-21
+## v0.6.0 (2026-10-21)
 32-bit readings, named device modes and signed values.
 
 - named readings can be 32-bit: four neighbouring reply readings (or three plus a 0x00 high byte,
@@ -22,7 +22,7 @@
 - synthetic fan with `observe=True`: the status reply's spare byte reports the current mode
   (`auto`/`silent`/`balanced`/`turbo`) and the markers note it, so `usb-rea demo --device fan` names it
 
-## v0.5.0 — 2026-10-20
+## v0.5.0 (2026-10-20)
 Readings and status flags get the names the vendor app shows for them.
 
 - named readings: `usb-rea mark "seen rpm 1180 temp 34"` notes what the vendor app displays. These
@@ -40,7 +40,7 @@ Readings and status flags get the names the vendor app shows for them.
   evidence table; observations match e.g. `byte 1 bit 0`; the driver's `query_<name>()` returns booleans
 - synthetic fan: `make_capture(..., observe=True)` adds `seen` markers; `usb-rea demo --device fan` uses them
 
-## v0.4.0 — 2026-10-19
+## v0.4.0 (2026-10-19)
 The device's answers are decoded too, not only what the vendor app sends.
 
 - device responses: each host query (command, background poll, class/vendor control read such as
@@ -55,7 +55,7 @@ The device's answers are decoded too, not only what the vendor app sends.
 - synthetic fan: replies `a5 <cmd> <seq> <arg u16le> <sum8>` and, with `poll=`, a status reply with
   current RPM and temperature, for ground-truth tests
 
-## v0.3.0 — 2026-10-18
+## v0.3.0 (2026-10-18)
 Vendor apps that poll the device no longer confuse the analysis.
 
 - background traffic: identical host→device messages sent on a steady rhythm independent of the
@@ -67,7 +67,7 @@ Vendor apps that poll the device no longer confuse the analysis.
 - install docs use PyPI (`pip install usb-rea`, `uvx --from usb-rea usb-rea mcp`) instead of git URLs
 - releases also publish `server.json` to the official MCP Registry (GitHub OIDC, no token)
 
-## v0.2.1 — 2026-10-16
+## v0.2.1 (2026-10-16)
 - multi-packet transactions: actions that send several packets (e.g. write + apply) are inferred as one command; the driver sends all packets in order
 - cross-packet checksums (a later packet carrying a checksum of an earlier one)
 - fix: `mcp` is now a core dependency, so a plain `pip install usb-rea` gives a working `usb-rea mcp`
@@ -76,10 +76,10 @@ Vendor apps that poll the device no longer confuse the analysis.
   descriptions so Glama TDQS can score the schema; analysis tools accept the same `labels` string/file
   as the CLI for marker-free captures
 
-## v0.2.0 — 2026-10-15
+## v0.2.0 (2026-10-15)
 Wireshark dissector generator, HID descriptor decoding, wider inference, marker-free captures.
 
-- `usb-rea dissector` (MCP tool `wireshark_dissector`): generate a Wireshark Lua dissector for the inferred protocol —
+- `usb-rea dissector` (MCP tool `wireshark_dissector`): generate a Wireshark Lua dissector for the inferred protocol:
   command names in the Info column, decoded values, counters, lookup labels, checksum verification with expert info;
   tested against real tshark 4.4 in CI. `usb-rea demo` now writes `<device>.lua` too
 - synthetic captures: submission and completion now share one URB id and use proper usbmon data flags,
@@ -96,7 +96,7 @@ Wireshark dissector generator, HID descriptor decoding, wider inference, marker-
 - registry metadata: `server.json` (official MCP Registry, `mcp-name` marker in README) and `smithery.yaml`
 - listed on Glama (score badge in README); MCP install snippets now use the git URL so they work before the PyPI release
 
-## v0.1.0 — 2026-10-14
+## v0.1.0 (2026-10-14)
 First public release.
 
 - pcap/pcapng parser for Linux usbmon (DLT 189/220) and Windows USBPcap (DLT 249), pure Python

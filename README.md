@@ -1,4 +1,4 @@
-# usb-rea — Reverse Engineer any USB gadget
+# usb-rea: Reverse Engineer any USB gadget
 
 <!-- mcp-name: io.github.emirmrkaljevic/usb-rea -->
 
@@ -9,9 +9,9 @@
 
 ![usb-rea demo: capture labelled clicks, get the protocol and a working driver](docs/demo.gif)
 
-Got a USB device that only ships a Windows vendor app (case LCD, RGB controller, mouse, "smart" lamp)? Click around in the vendor app while **usb-rea** captures the USB traffic (usbmon on Linux, USBPcap on Windows), diffs the packets per action, infers the protocol, and writes an open-source Python/libusb driver — with every conclusion linked to the exact packets that prove it.
+Got a USB device that only ships a Windows vendor app (case LCD, RGB controller, mouse, "smart" lamp)? Click around in the vendor app while **usb-rea** captures the USB traffic (usbmon on Linux, USBPcap on Windows), diffs the packets per action, infers the protocol, and writes an open-source Python/libusb driver, with every conclusion linked to the exact packets that prove it.
 
-> Status: alpha (v0.6.0, [on PyPI](https://pypi.org/project/usb-rea/)). Validated on synthetic devices, on protocols documented by liquidctl and rivalcfg, and on public Wireshark captures — see [docs/VALIDATION.md](docs/VALIDATION.md). Not yet tested on a physical gadget: your captures are welcome.
+> Status: alpha (v0.6.0, [on PyPI](https://pypi.org/project/usb-rea/)). Validated on synthetic devices, on protocols documented by liquidctl and rivalcfg, and on public Wireshark captures (see [docs/VALIDATION.md](docs/VALIDATION.md)). Not yet tested on a physical gadget: your captures are welcome.
 
 ## Try it in 10 seconds (no hardware needed)
 ```bash
@@ -65,7 +65,7 @@ usb-rea report lamp.pcapng -o report.md
 usb-rea scaffold lamp.pcapng -o lamp_driver.py
 usb-rea dissector lamp.pcapng -o lamp.lua      # Wireshark dissector for the same protocol
 ```
-Captured on Windows with USBPcap/Wireshark and no markers? Click each action with a short pause in between, then just list them in order — usb-rea splits the traffic at the pauses:
+Captured on Windows with USBPcap/Wireshark and no markers? Click each action with a short pause in between, then just list them in order, and usb-rea splits the traffic at the pauses:
 ```bash
 usb-rea report lamp.pcapng --labels "brightness 0%; brightness 50%; brightness 100%; power off; power on"
 usb-rea scaffold lamp.pcapng --labels labels.txt -o lamp_driver.py   # one label per line
@@ -142,15 +142,15 @@ With [uv](https://docs.astral.sh/uv/) no install step is needed:
 For Claude Code: `claude mcp add usb-rea -- uvx --from usb-rea usb-rea mcp`. The server is also listed on the [official MCP Registry](https://registry.modelcontextprotocol.io/v0/servers?search=io.github.emirmrkaljevic/usb-rea) as `io.github.emirmrkaljevic/usb-rea` and on [Glama](https://glama.ai/mcp/servers/emirmrkaljevic/usb-rea), which builds it from the repo's `Dockerfile` and checks that it starts and lists its tools.
 
 ## How it works
-1. `usb-rea capture start` — record traffic (usbmon / USBPcap)
-2. `usb-rea mark "brightness 50%"` — label each action you take in the vendor app (`mark "seen rpm 1180"` notes what it displays)
-3. `usb-rea diff` — which bytes change per action, value correlation, checksums, counters
-4. `usb-rea infer` — message templates + evidence report
-5. `usb-rea scaffold` — generate a pyusb driver and replay tests
-6. `usb-rea dissector` — write a Wireshark Lua dissector for the inferred protocol
-7. `usb-rea replay` — send packets to the device (only with explicit confirmation)
-8. `usb-rea hid` — decode a HID report descriptor from a capture (GET_DESCRIPTOR 0x22) or from hex, and decode report payloads
-9. `usb-rea mcp` — the same tools as an MCP server for AI agents
+1. `usb-rea capture start`: record traffic (usbmon / USBPcap)
+2. `usb-rea mark "brightness 50%"`: label each action you take in the vendor app (`mark "seen rpm 1180"` notes what it displays)
+3. `usb-rea diff`: which bytes change per action, value correlation, checksums, counters
+4. `usb-rea infer`: message templates + evidence report
+5. `usb-rea scaffold`: generate a pyusb driver and replay tests
+6. `usb-rea dissector`: write a Wireshark Lua dissector for the inferred protocol
+7. `usb-rea replay`: send packets to the device (only with explicit confirmation)
+8. `usb-rea hid`: decode a HID report descriptor from a capture (GET_DESCRIPTOR 0x22) or from hex, and decode report payloads
+9. `usb-rea mcp`: the same tools as an MCP server for AI agents
 
 ### Wireshark dissector
 `usb-rea dissector capture.pcapng -o lamp.lua` turns the inferred protocol into a Wireshark Lua plugin, so you can keep
