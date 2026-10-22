@@ -125,6 +125,9 @@ The report lists the map (`mode: 0x00 = silent, 0x02 = turbo`) with its evidence
 it as `table`, and the driver returns the word, or the raw number for a value never seen:
 `{"mode": "turbo", …}`. When the app shows a negative number (`seen temp -5`), 8- and 16-bit readings
 whose top bit gets set are also tried as signed (`i8`, `i16le`/`i16be`).
+A value shown with decimals (`seen temp 41.5`) is also tried as tenths, hundredths or
+thousandths (raw 415, scale 10), so two such markers are enough instead of the three a free linear
+fit needs.
 
 Limits: only replies (not commands) are named, a name that fits two places is left out, modes are
 one byte (or one contiguous bit group in it) and only the words you saw get a label, 32-bit readings

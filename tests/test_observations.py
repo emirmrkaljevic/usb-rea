@@ -313,3 +313,18 @@ def test_negative_values_read_as_signed(tmp_path):
                                 {i: f"seen temp {temps[i]}" for i in (1, 4, 9)}))
     f = _named(_poll(p))["temp"]
     assert (f.signed, f.scale, f.bias) == (False, 1.0, 40.0)
+
+
+def test_decimal_values_read_as_tenths(tmp_path):
+    temps = [150 + (i * 137) % 500 for i in range(20)]               # tenths of a degree, u16 BE
+    two = {i: f"seen temp {temps[i] / 10:g}" for i in (2, 7)}       # two decimals are enough
+    assert all("." in m for m in two.values())
+    p = analyze(_report_capture(tmp_path / "d.pcap", lambda i: temps[i].to_bytes(2, "big"), two))
+    f = _named(_poll(p))["temp"]
+    assert (f.width, f.endian, f.scale, f.bias) == (2, "be", 10.0, 0.0)
+    _, _, query = _load(generate(p), tmp_path, "drv_tenths")
+    assert abs(query(bytes([0x03, 0x01, 0x9F, 0x00]))["temp"] - 41.5) < 1e-9
+    # whole numbers shown on screen are never read as tenths
+    p = analyze(_report_capture(tmp_path / "w.pcap", lambda i: temps[i].to_bytes(2, "big"),
+                                {i: f"seen temp {temps[i] // 10}" for i in (2, 7)}))
+    assert "temp" not in _named(_poll(p))

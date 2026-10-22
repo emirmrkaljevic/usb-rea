@@ -272,7 +272,8 @@ def name_readings(fields: list[Field], replies: list[Transfer], seen: list[dict]
     Each observation is compared with the last reply before it (what the app was showing when the
     marker was typed) or, failing that, the first one after it, within SEEN_WINDOW; if that does not
     fit, the other way round. A reading takes the name when it equals every observation of that name
-    (2+ observations, within one unit or 1%), or when a linear raw = value * scale + bias fits them
+    (2+ observations, within one unit or 1%; a value shown with decimals may also be sent as tenths,
+    hundredths or thousandths, 'seen temp 41.5' as raw 415), or when a linear raw = value * scale + bias fits them
     exactly and survives leave-one-out (3+ observations, as for commands). Two neighbouring byte
     readings are also tried as one 16-bit LE/BE number, and four (or three plus a 0x00 high byte) as one
     32-bit LE/BE number, e.g. energy counters or uptime. When the app showed a negative value ('seen
@@ -315,15 +316,18 @@ def name_readings(fields: list[Field], replies: list[Transfer], seen: list[dict]
         cands = [(*c, False) for c in cands] + [
             (*c, True) for c in cands if c[1] <= 2 and min(o["value"] for o in obs) < 0
             and any(_get(r.data, c[0], c[1], c[2], True) < 0 for r in replies)]
+        # a value shown with decimals ('seen temp 41.5') is often sent as tenths, hundredths or thousandths
+        scales = (1.0,) + ((10.0, 100.0, 1000.0) if any(o["value"] != int(o["value"]) for o in obs) else ())
         exact, fitted = [], []
         for off, w, end, sg in cands:
             xy = [([o["value"] for o, _ in pts], [_get(r.data, off, w, end, sg) for _, r in pts], pts) for pts in tries]
-            same = sorted((sum(abs(y - x) for x, y in zip(xs, ys)), i, pts) for i, (xs, ys, pts) in enumerate(xy)
-                          if len(pts) >= 2 and all(abs(y - x) <= _tol(x) for x, y in zip(xs, ys)))
+            same = sorted((sum(abs(y - x * k) for x, y in zip(xs, ys)) / k, k, i, pts)
+                          for k in scales for i, (xs, ys, pts) in enumerate(xy)
+                          if len(pts) >= 2 and all(abs(y - x * k) <= _tol(x * k) for x, y in zip(xs, ys)))
             fits = [(*fit, pts) for xs, ys, pts in xy
                     if len(pts) >= 3 and (fit := _fit_linear(xs, ys)) not in (None, (1.0, 0.0))]
             if same:
-                exact.append((off, w, end, sg, 1.0, 0.0, same[0][2]))  # the closer of the two pairings
+                exact.append((off, w, end, sg, same[0][1], 0.0, same[0][3]))  # the closer pairing and scale
             elif fits:
                 fitted.append((off, w, end, sg, *fits[0]))
         hits = exact or fitted
