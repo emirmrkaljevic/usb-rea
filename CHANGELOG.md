@@ -5,6 +5,9 @@
 - decimal readings: a `seen` value shown with decimals (`seen temp 41.5`) is also matched as
   tenths, hundredths or thousandths of the raw number (raw 415, scale 10), so two markers are
   enough; whole numbers on screen are never read that way
+- `seen` markers accept numbers as Windows apps print them in other locales: a decimal comma
+  (`seen temp 41,5 °C`) and a thousands separator (`seen rpm 1,180`); a comma followed by a space
+  still separates two readings
 
 ## v0.6.0 (2026-10-21)
 32-bit readings, named device modes and signed values.

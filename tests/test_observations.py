@@ -29,6 +29,9 @@ def test_parse_observation_labels():
     assert split_observation("seen mode Turbo") == [("mode", "turbo")]
     assert split_observation("seen rpm 900 fan mode quiet, led off") == [("rpm", 900.0), ("fan mode", "quiet"), ("led", 0.0)]
     assert split_observation("seen temp -5°C") == [("temp", -5.0)] and split_observation("seen silent") == []
+    assert split_observation("seen temp 41,5 °C, rpm 1,180") == [("temp", 41.5), ("rpm", 1180.0)]
+    assert split_observation("seen v 12,25") == [("v", 12.25)]
+    assert split_observation("seen rpm 1180,temp 40") == [("rpm", 1180.0), ("temp", 40.0)]
     assert split_observation("fan 1200") == [] and not is_observation("screen 3") and is_observation("seen")
 
 

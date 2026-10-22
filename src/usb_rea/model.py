@@ -97,12 +97,18 @@ def split_observation(label: str) -> list[tuple[str, float | str]]:
     """'seen rpm 1180, temp 34°C' -> [('rpm', 1180.0), ('temp', 34.0)]; [] for other labels.
     On/off states count as 1/0: 'seen pump on, alarm off' -> [('pump', 1.0), ('alarm', 0.0)].
     A word as the last of two or more words of a part is a mode or other enum value, kept as text:
-    'seen mode turbo' -> [('mode', 'turbo')], 'seen rpm 1180 fan mode quiet' -> [..., ('fan mode', 'quiet')]."""
+    'seen mode turbo' -> [('mode', 'turbo')], 'seen rpm 1180 fan mode quiet' -> [..., ('fan mode', 'quiet')].
+    A comma between digits is a thousands separator before exactly three digits ('1,180' -> 1180) and a
+    decimal comma otherwise ('41,5' -> 41.5); a comma followed by a space still separates parts."""
     import re
     if not is_observation(label):
         return []
+    body = label.strip()[4:]
+    # numbers as Windows apps print them in many locales: '1,180 rpm' (thousands), '41,5 °C' (decimal)
+    body = re.sub(r"(?<=\d),(?=\d{3}(?!\d))", "", body)
+    body = re.sub(r"(?<=\d),(?=\d)", ".", body)
     out = []
-    for part in re.split(r"[,;]+", label.strip()[4:]):
+    for part in re.split(r"[,;]+", body):
         name = []
         for t in re.split(r"[\s=:]+", part.strip()):
             v = re.fullmatch(r"(-?\d+(?:\.\d+)?)(?:%|°?[a-zA-Z]{0,3})", t)

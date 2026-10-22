@@ -127,7 +127,8 @@ it as `table`, and the driver returns the word, or the raw number for a value ne
 whose top bit gets set are also tried as signed (`i8`, `i16le`/`i16be`).
 A value shown with decimals (`seen temp 41.5`) is also tried as tenths, hundredths or
 thousandths (raw 415, scale 10), so two such markers are enough instead of the three a free linear
-fit needs.
+fit needs. Numbers can be typed the way the app prints them, with a decimal comma or a thousands
+separator: `seen temp 41,5 °C, rpm 1,180` reads as 41.5 and 1180.
 
 Limits: only replies (not commands) are named, a name that fits two places is left out, modes are
 one byte (or one contiguous bit group in it) and only the words you saw get a label, 32-bit readings
