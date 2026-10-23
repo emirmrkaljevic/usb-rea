@@ -125,6 +125,9 @@ The report lists the map (`mode: 0x00 = silent, 0x02 = turbo`) with its evidence
 it as `table`, and the driver returns the word, or the raw number for a value never seen:
 `{"mode": "turbo", …}`. When the app shows a negative number (`seen temp -5`), 8- and 16-bit readings
 whose top bit gets set are also tried as signed (`i8`, `i16le`/`i16be`).
+A small number that no whole byte matches (`seen battery 3` for battery bars) is also looked for in
+part of a byte: the free bits beside named flags or modes (trimmed to the bits that change, so fixed
+reserved bits are skipped) or either nibble, e.g. `bits[1:4] battery`; the driver returns the number.
 A value shown with decimals (`seen temp 41.5`) is also tried as tenths, hundredths or
 thousandths (raw 415, scale 10), so two such markers are enough instead of the three a free linear
 fit needs. Numbers can be typed the way the app prints them, with a decimal comma or a thousands
@@ -198,6 +201,7 @@ usb-rea hid capture.pcapng --decode "10ff0d1d000000" --type Output
 - [x] named readings: `seen rpm 1180` markers name and scale reply readings (identity or linear, 8/16/32-bit)
 - [x] on/off status flags: `seen pump on` / `seen pump off` name single bits of reply bytes
 - [x] modes / enum values (`seen mode turbo`) and signed readings (`seen temp -5`)
+- [x] small levels packed beside flags (`seen battery 3` in bits 1-3 of a status byte)
 - [ ] state machines (multi-step handshakes)
 
 ## Legal

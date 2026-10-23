@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+- small levels in part of a byte: when no whole reading matches a `seen` number (`seen battery 3`),
+  the free bits beside named flags or modes, or either nibble of a byte, are tried; fixed reserved
+  bits are trimmed off, a level that fits two places is left out with a note, and the driver returns
+  the number (`{"charging": True, "battery": 4}`)
+
 ## v0.6.1 (2026-10-23)
 Decimal readings and numbers in other locales.
 

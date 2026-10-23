@@ -129,9 +129,11 @@ def parse(spec, data, sent=b""):
         elif kind == "reading" and "table" in f:  # mode: the label the vendor app showed for this value
             v = (data[off] >> f["bit_offset"]) & ((1 << f["bit_width"]) - 1) if "bit_width" in f else raw
             out[f["name"]] = f["table"].get(v, v)
-        elif kind == "reading" and "bit_width" in f:  # on/off status flag
+        elif kind == "reading" and f.get("bit_width") == 1:  # on/off status flag
             out[f["name"]] = bool((data[off] >> f["bit_offset"]) & 1)
         elif kind == "reading" and "scale" in f:  # named after what the vendor app showed
+            if "bit_width" in f:  # a small level packed into part of the byte
+                raw = (data[off] >> f["bit_offset"]) & ((1 << f["bit_width"]) - 1)
             v = (raw - f["bias"]) / f["scale"]
             out[f["name"]] = int(v) if v == int(v) else v
         elif kind in ("counter", "reading"):

@@ -280,6 +280,24 @@ def test_mode_bits_beside_a_flag(tmp_path):
     assert out["pump"] is True and out["profile"] == "boost"
 
 
+def test_small_level_in_bits_beside_a_flag(tmp_path):
+    # byte 1: bit 0 charging (flips every reply), bits 1-3 battery bars 0..4, bits 4-7 reserved (0x50)
+    raw = lambda i: bytes([0x50 | (i % 2) | (i // 4 % 6) << 1])
+    shown = {1: "seen charging on, battery 0", 2: "seen charging off", 6: "seen battery 1", 13: "seen battery 3"}
+    p = analyze(_report_capture(tmp_path / "l.pcap", raw, shown))
+    n = _named(_poll(p))
+    assert n["charging"].bit_offset == 0
+    assert (n["battery"].offset, n["battery"].bit_offset, n["battery"].bit_width) == (1, 1, 3)
+    assert n["battery"].describe() == "bits[1:4] battery, seen 0..4" and "bits 1-3) is the number itself" in render(p)
+    _, _, query = _load(generate(p), tmp_path, "drv_level")
+    out = query(bytes([0x03, 0x59, 0x00]))
+    assert out["charging"] is True and out["battery"] == 4
+    # a level that two nibbles fit equally is left out with a note
+    r = _poll(analyze(_report_capture(tmp_path / "n.pcap", lambda i: bytes([(i // 5 % 3 + 1) * 0x11]),
+                                      {1: "seen bars 1", 6: "seen bars 2"})))
+    assert not _named(r) and any("'bars' fits several bit groups (byte 1 bits 0-3, byte 1 bits 4-7)" in x for x in r.notes)
+
+
 def test_ambiguous_or_mixed_modes_left_out(tmp_path):
     two = lambda i: bytes([i // 5 % 2, 0x10 * (i // 5 % 2)])          # bytes 1 and 2 switch together
     shown = {1: "seen mode a b silent", 2: "seen mode a b silent", 6: "seen mode a b turbo"}

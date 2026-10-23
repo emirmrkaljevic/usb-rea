@@ -65,6 +65,8 @@ class Field:
             return f"{bits}{self.name}: " + ", ".join(f"0x{k:02x} = {v}" for k, v in sorted(self.table.items()))
         if self.kind == "reading" and self.name and self.bit_width == 1:
             return f"bit {self.bit_offset}: {self.name} (1 = on)"
+        if self.kind == "reading" and self.name and self.bit_width:
+            return f"bits[{self.bit_offset}:{self.bit_offset + self.bit_width}] {self.name}, seen {self.limits[0]}..{self.limits[1]}"
         if self.kind == "reading" and self.name:
             return f"{w or 'u8 '}{self.name} = {formula(self.scale, self.bias)}, seen {self.limits[0]}..{self.limits[1]}"
         if self.kind == "reading":

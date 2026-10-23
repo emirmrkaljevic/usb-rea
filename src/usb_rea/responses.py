@@ -293,8 +293,11 @@ def name_readings(fields: list[Field], replies: list[Transfer], seen: list[dict]
     by_name = defaultdict(list)
     for o in seen:
         by_name[o["name"]].append(o)
-    # words last: a mode may share its byte with on/off flags, which are named first
-    for name, obs in sorted(by_name.items(), key=lambda kv: any(isinstance(o["value"], str) for o in kv[1])):
+    # on/off flags first, words last: a mode or a small level may share its byte with flags
+    def order(kv):
+        vals = [o["value"] for o in kv[1]]
+        return 2 if any(isinstance(v, str) for v in vals) else int(set(vals) != {0.0, 1.0})
+    for name, obs in sorted(by_name.items(), key=order):
         tries = [[(o, r) for o in obs if (r := near(o["ts"], after))] for after in (False, True)]
         words = {isinstance(o["value"], str) for o in obs}
         if len(words) > 1:
@@ -331,6 +334,9 @@ def name_readings(fields: list[Field], replies: list[Transfer], seen: list[dict]
             elif fits:
                 fitted.append((off, w, end, sg, *fits[0]))
         hits = exact or fitted
+        if not hits and all(o["value"] >= 0 and o["value"] == int(o["value"]) for o in obs):
+            fields = name_level(name, fields, replies, tries, notes)
+            continue
         if len(hits) > 1:
             where = ", ".join((f"{o}-{o + w - 1} {e}" if w > 1 else f"{o}") + (" signed" if sg else "")
                               for o, w, e, sg, *_ in hits)
@@ -352,6 +358,52 @@ def name_readings(fields: list[Field], replies: list[Transfer], seen: list[dict]
         if rest:
             notes.append(f"byte {off}: bits other than the named ones also change (mask 0x{rest:02x}); not described")
     return fields
+
+
+def name_level(name: str, fields: list[Field], replies: list[Transfer], tries: list, notes: list[str]) -> list[Field]:
+    """Small number packed into part of a byte ('seen level 3', 'seen battery 2'), tried only when no
+    whole reading fits: the free bits beside named flags or modes (each contiguous run, trimmed to the
+    bits that change between replies, so reserved bits that stay fixed are left out), or either nibble
+    of an unnamed byte reading. The raw bits must equal every observation of a pairing
+    with 2+ observations and 2+ different values. A level that fits more than one place is left out."""
+    groups = []
+    for off in sorted({f.offset for f in fields if f.kind == "reading" and f.name and f.bit_width}):
+        used, bit = _named_bits(fields, off), 0
+        while bit < 8:
+            if used >> bit & 1:
+                bit += 1
+                continue
+            lo = bit
+            while bit < 8 and not used >> bit & 1:
+                bit += 1
+            ch = 0
+            for a, b in zip(replies, replies[1:]):
+                ch |= (a.data[off] ^ b.data[off]) >> lo & ((1 << (bit - lo)) - 1)
+            if ch & (ch - 1):  # 2+ changing bits: from the lowest to the highest of them
+                a, z = (ch & -ch).bit_length() - 1, ch.bit_length()
+                groups.append((off, lo + a, z - a))
+    groups += [(f.offset, lo, 4) for f in fields
+               if f.kind == "reading" and f.width == 1 and not f.name and not f.bit_width for lo in (0, 4)]
+    hits = []
+    for off, lo, bw in groups:
+        get = lambda d: (d[off] >> lo) & ((1 << bw) - 1)
+        pts = next((pts for pts in tries if len(pts) >= 2 and len({o["value"] for o, _ in pts}) >= 2
+                    and all(get(r.data) == o["value"] for o, r in pts)), None)
+        if pts:
+            hits.append((off, lo, bw, pts))
+    if len(hits) > 1:
+        where = ", ".join(f"byte {o} bits {lo}-{lo + bw - 1}" for o, lo, bw, _ in hits)
+        notes.append(f"'{name}' fits several bit groups ({where}): left unnamed; note values while they differ more")
+    if len(hits) != 1:
+        return fields
+    off, lo, bw, pts = hits[0]
+    get = lambda d: (d[off] >> lo) & ((1 << bw) - 1)
+    vals = [get(r.data) for r in replies]
+    f = Field(off, "reading", 1, "le", scale=1.0, bias=0.0, limits=(min(vals), max(vals)), name=name,
+              bit_offset=lo, bit_width=bw, frames=[r.frame for r in replies][:20],
+              observed=[(o["value"], get(r.data), r.frame, o["time"]) for o, r in pts])
+    return sorted([x for x in fields if not (x.offset == off and not x.name)] + [f],
+                  key=lambda x: (x.offset, x.bit_offset or 0))
 
 
 def _named_bits(fields: list[Field], off: int) -> int:

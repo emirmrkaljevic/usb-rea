@@ -137,6 +137,8 @@ def _responses(proto: Protocol) -> list[str]:
                         + ", ".join(f"0x{k:02x} = {v}" for k, v in f.table.items()) + "`")
             elif f.bit_width == 1:
                 what = f"(byte {f.offset}, bit {f.bit_offset}) is on when the bit is 1"
+            elif f.bit_width:
+                what = f"(byte {f.offset}, bits {f.bit_offset}-{f.bit_offset + f.bit_width - 1}) is the number itself"
             else:
                 what = f"({span}, {kind}) = `{formula(f.scale, f.bias)}`"
             L += ["", f"`{f.name}` {what}, "
