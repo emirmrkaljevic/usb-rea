@@ -1,6 +1,7 @@
 # Changelog
 
-## Unreleased
+## v0.6.1 (2026-10-23)
+Decimal readings and numbers in other locales.
 
 - decimal readings: a `seen` value shown with decimals (`seen temp 41.5`) is also matched as
   tenths, hundredths or thousandths of the raw number (raw 415, scale 10), so two markers are
