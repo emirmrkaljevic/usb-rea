@@ -88,7 +88,9 @@ def build():
         its observed min/max) and query/reply frame numbers. A reading that 'seen' markers explain
         gets `name`, `scale` and `bias` (raw = value * scale + bias, `signed` for i8/i16) plus the
         observations in `observed`; a named mode has `table` (raw value -> word the app showed);
-        `observations` lists every 'seen' value and which reply bytes it matched.
+        `observations` lists every 'seen' value and which reply bytes it matched. `handshake` lists the
+        messages sent once before the first action (request, reply, `expect` with `??` for token and
+        checksum bytes, `uses`/`tokens` for reply bytes reused later as a session token, checksums).
 
         Read-only analysis: does not write files or talk to hardware. Requires either markers from
         mark_action or `labels` for a finished capture with pauses between clicks. Prefer report
@@ -107,7 +109,8 @@ def build():
         """Generate a Markdown evidence report: every claim links to frame numbers in the capture.
 
         Includes a 'Device responses' section when the device answers queries (status polls,
-        command ACKs, GET_REPORT), saying which reply bytes could not be explained, and an
+        command ACKs, GET_REPORT), saying which reply bytes could not be explained, a 'Handshake'
+        section for messages sent once before the first action (session setup, tokens), and an
         'Observations' section for 'seen' markers (named readings and unmatched observations).
 
         Read-only: returns Markdown text (does not write a file). Same inputs as diff_actions.
@@ -128,7 +131,8 @@ def build():
         One set_<command>() per command; when the device replies, also query_<name>() methods that
         send the command/poll (or GET_REPORT), read the reply and return it decoded as a dict
         (readings named by 'seen' markers come back scaled and modes as words, e.g.
-        {'rpm': 1180, 'temp': 34, 'mode': 'turbo', 'ok': True}).
+        {'rpm': 1180, 'temp': 34, 'mode': 'turbo', 'ok': True}). When the capture has a handshake,
+        Device() replays it in open() before any command and checks the fixed reply bytes.
 
         Read-only analysis that returns driver source as text (does not write a file or open the
         device). Same capture/markers/labels inputs as report. Prefer wireshark_dissector when the

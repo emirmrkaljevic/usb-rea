@@ -7,6 +7,8 @@ Devices (VID 0x1234 / PID 0xABCD):
          answers A5 40 <current RPM u16 LE> <temperature °C> 00 <sum8>; with observe=True the
          00 byte reports the current mode (00 auto until a 'mode N' command, then that mode's byte)
          and the markers note what the vendor app showed now and then ('seen rpm 1186 temp 39 mode auto')
+         With handshake=True the vendor app first opens a session (see fan_handshake): hello, auth
+         with the 4-byte session token from the hello reply, start
   dial: A5 <cmd> <args> <sum8>; 32-bit LE position + 4-bit level bitfield
 """
 from __future__ import annotations
@@ -133,6 +135,23 @@ def fan_status(rpm: int, temp: int, mode: int = 0x00) -> bytes:
     return body + bytes([sum(body) & 0xFF])
 
 
+def fan_handshake(token: bytes) -> list[tuple[bytes, bytes]]:
+    """Fan session setup as (request, reply) pairs, requests framed like commands (5A 00 <cmd> ... CRC16):
+    hello 01 -> A5 01 <4-byte session token> <sum8>; auth 02 <token> -> A5 02 01 <sum8>;
+    start 03 01 -> A5 03 01 <sum8>."""
+    from .checksums import compute
+
+    def req(body):
+        body = bytes([0x5A, 0x00]) + body
+        body = body.ljust(6, b"\x00")
+        return body + compute("crc16_modbus", body).to_bytes(2, "little")
+
+    def rep(body):
+        body = bytes([0xA5]) + body
+        return body + bytes([sum(body) & 0xFF])
+    return [(req(b"\x01"), rep(b"\x01" + token)), (req(b"\x02" + token), rep(b"\x02\x01")),
+            (req(b"\x03\x01"), rep(b"\x03\x01"))]
+
 
 DIAL_ACTIONS = [
     # values chosen so each of the 4 LE bytes varies (required to claim u32 over four u8s)
@@ -157,7 +176,8 @@ def encode_dial(name: str, values: list[float]) -> bytes:
 
 def make_capture(path, actions: list[str] | None = None, transport: str = "bulk",
                  noise: bool = True, seed: int = 0, device: str = "lamp",
-                 poll: float = 0.0, poll_seq: bool = False, observe: bool = False) -> tuple[Path, Path]:
+                 poll: float = 0.0, poll_seq: bool = False, observe: bool = False,
+                 handshake: bool = False) -> tuple[Path, Path]:
     """Write <path> (pcap) and <path>.actions.json. Returns both paths.
 
     poll: if > 0, the "vendor app" also sends a status request every `poll` seconds on the
@@ -187,6 +207,17 @@ def make_capture(path, actions: list[str] | None = None, transport: str = "bulk"
     w.control_in(t, bytes([0x80, 6, 0, 1, 0, 0, 18, 0]), device_descriptor())
     if transport == "control":
         w.control_in(t + 0.01, bytes([0x81, 6, 0, 0x22, 0, 0, len(LAMP_HID_DESCRIPTOR), 0]), LAMP_HID_DESCRIPTOR)
+    if handshake:
+        if device != "fan":
+            raise ValueError("only the synthetic fan does a handshake")
+        token = random.Random(seed + 7).randbytes(4)
+        for i, (req, rep) in enumerate(fan_handshake(token)):
+            at = t + 0.012 + 0.01 * i
+            if transport == "control":
+                w.control_out(at, bytes([0x21, 0x09, 0x00, 0x02, 0, 0, len(req), 0]), req)
+            else:
+                w.out(at, 0x01, req)
+            w.in_(at + 0.003, 0x81, rep)
     t += 0.5
     marks = []
     seq = 0x40

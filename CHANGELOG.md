@@ -1,6 +1,17 @@
 # Changelog
 
 ## Unreleased
+- handshakes: host→device messages (and class/vendor control reads) sent before the first action
+  marker, that are not background polls and are never sent again, are reported as the session setup
+  the vendor app does when it opens the device, each with its reply. A run of 3+ reply bytes reused
+  in a later handshake request or in every copy of a command is noted as a session token, a request
+  run repeated in the reply as an echo, and a checksum shared by all handshake requests (or replies)
+  is recognised. Report: *Handshake* section with frames; JSON/MCP: `handshake`; the driver replays
+  it in `Device.open()` before any command, copying tokens from live replies, recomputing request
+  checksums and checking the fixed reply bytes. Only fixed linear sequences for now (no retries or
+  branching), so the state machine roadmap item stays open
+- synthetic fan: `make_capture(..., handshake=True)` opens a session (hello, auth with the token
+  from the hello reply, start); `usb-rea demo --device fan` shows it
 - small levels in part of a byte: when no whole reading matches a `seen` number (`seen battery 3`),
   the free bits beside named flags or modes, or either nibble of a byte, are tried; fixed reserved
   bits are trimmed off, a level that fits two places is left out with a note, and the driver returns

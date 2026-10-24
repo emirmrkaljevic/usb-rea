@@ -164,8 +164,9 @@ def _demo(outdir: Path, device: str = "lamp") -> int:
     outdir.mkdir(parents=True, exist_ok=True)
     # the fan's vendor app also polls its status, so the demo shows decoded replies too
     # and the markers note what its screen showed ('seen rpm 1186 temp 39 mode auto'), which names the readings
+    # it also opens a session first (hello, auth with the token from the hello reply, start)
     cap, _ = make_capture(outdir / f"{device}.pcap", device=device, poll=0.5 if device == "fan" else 0.0,
-                          observe=device == "fan")
+                          observe=device == "fan", handshake=device == "fan")
     proto = analyze(cap)
     (outdir / "report.md").write_text(render(proto, str(cap), sha256(cap)))
     (outdir / f"{device}_driver.py").write_text(generate(proto))
@@ -176,6 +177,12 @@ def _demo(outdir: Path, device: str = "lamp") -> int:
           f"device {proto.vid:04x}:{proto.pid:04x}\n")
     for c in proto.commands:
         print(f"{c.name:12s} {c.confidence:4.0%}  " + " | ".join(f.describe() for f in c.fields))
+    if proto.handshake:
+        print(f"\nhandshake ({len(proto.handshake)} messages sent once when the app opens the device):")
+        for st in proto.handshake:
+            reuse = "".join(f", bytes {u['offset']}-{u['offset'] + u['width'] - 1} = token from step {u['step']}"
+                            for u in st["uses"])
+            print(f"  {st['step']}. {st['request'] or '(control read)'} -> {st['expect'] or 'no reply'}{reuse}")
     if proto.responses:
         print("\ndevice replies:")
         for r in proto.responses:

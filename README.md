@@ -23,13 +23,18 @@ fan    100%  0x5a | counter (+1 per message) | 0x10 | u16be round(value * 1 + 0)
 color  100%  0x5a | counter (+1 per message) | 0x20 | round(value * 1 + 0) | round(value[1] * 1 + 0) | round(value[2] * 1 + 0) | u16le crc16_modbus(bytes[0:6])
 mode   100%  0x5a | counter (+1 per message) | 0x30 | lookup 1→0x11, 2→0x22, 3→0x47 | 0x00 | 0x00 | u16le crc16_modbus(bytes[0:6])
 
+handshake (3 messages sent once when the app opens the device):
+  1. 5a 00 01 00 00 00 0d 1d -> a5 01 ?? ?? ?? ?? ??
+  2. 5a 00 02 38 b4 e6 52 1e 1e -> a5 02 01 ??, bytes 3-6 = token from step 1
+  3. 5a 00 03 01 00 00 5d 65 -> a5 03 01 ??
+
 device replies:
 fan    6/6  0xa5 | = query byte 2 (0x10) | = query byte 1 | u16le round(value * 1 + 0) | sum8(bytes[0:5])
 poll 1 7/7  0xa5 | = query byte 2 (0x40) | u16le rpm = raw, seen 794..4012 | u8 temp = raw, seen 35..38 | mode: 0x00 = auto, 0x11 = silent, 0x22 = balanced, 0x47 = turbo | sum8(bytes[0:6])
 
 21 of 21 'seen' observations matched a reply byte (mode, rpm, temp)
 ```
-It writes a synthetic capture of a fan controller (its vendor app also polls the fan's status, and the markers note what the app's screen showed, `seen rpm 1207 temp 37 mode auto`), recovers the protocol and the replies, names the readings and the fan's mode, and writes `report.md` (every claim linked to Wireshark frame numbers) and a working pyusb driver that encodes values it never saw and decodes what the fan answers.
+It writes a synthetic capture of a fan controller (its vendor app first opens a session with a token the fan hands out, then polls the fan's status, and the markers note what the app's screen showed, `seen rpm 1207 temp 37 mode auto`), recovers the protocol and the replies, names the readings and the fan's mode, and writes `report.md` (every claim linked to Wireshark frame numbers) and a working pyusb driver that encodes values it never saw and decodes what the fan answers.
 
 `--device lamp` (default) is a simple 8-bit device; `--device dial` shows 32-bit values and packed bitfields:
 ```
@@ -51,6 +56,7 @@ level        100%  0xa5 | 0x02 | bits[0:4] = round(value * 1 + 0) | 0x00 | sum8(
 | on/off status flags (`seen pump on`, `seen pump off`) | byte 5 `bit 0: pump (1 = on)` |
 | modes / enum values (`seen mode silent`, `seen mode turbo`) | byte 5 `mode: 0x00 = silent, 0x02 = turbo`, or `bits[4:6] profile: …` beside flags |
 | signed readings, when the app shows negative values (`seen temp -5`) | byte 4 `i8 temp = raw`, bytes 2-3 `i16be …` |
+| handshake: messages sent once when the app opens the device, session tokens | step 2 bytes 3-6 = bytes 2-5 of the reply to step 1 |
 
 Linear fits must survive leave-one-out cross-checks; otherwise usb-rea falls back to an honest lookup table and says so.
 
@@ -139,6 +145,28 @@ are never signed, multi-bit numeric readings packed beside other bits are not tr
 rounding coarser than one unit (e.g. RPM shown in steps of 10) only works for the identity, not for a
 scaled fit. `seen` labels in `--labels` mode have no timestamp and are skipped.
 
+### Handshakes: what the app sends when it opens the device
+Many devices want a few messages before they accept commands: a hello, an unlock or auth step, a
+"start" or "PC control on". usb-rea treats host→device messages (and class/vendor control reads)
+captured before your first action marker as a handshake when they are not background polls and are
+never sent again later in the capture, so start capturing before you open the vendor app. Each step
+is paired with the reply that follows it, and the report gets a *Handshake* section with the frames.
+A run of 3+ reply bytes that comes back in a later handshake request, or at the same offset in every
+captured copy of a command, is a session token or device id; a run of 3+ request bytes that the reply
+repeats is an echo. A checksum is claimed when one algorithm fits the end of every handshake request
+(or every reply). The generated driver replays the handshake in `Device.open()` (called by
+`Device()`; `Device(handshake=False)` skips it) before any command: tokens are copied from this
+session's live replies into later steps and into commands, request checksums are recomputed, and
+each reply is checked against the captured one (`??` for token and checksum bytes, checksums
+verified), raising `RuntimeError` on a mismatch. JSON/MCP output has it as `handshake`.
+
+Limits: every handshake message is seen once, so a byte that changes per session but is never reused
+(a random nonce the device only reports) looks fixed; `open(check=False)` replays without checking.
+Only fixed, linear sequences are replayed: no retries, no branching on the reply, no handshake that
+is repeated later (e.g. after a mode switch), and a token must be copied verbatim (a token that is
+transformed, such as a challenge answered with a hash, is not recognised). With `--labels` (no
+timestamps) the handshake is part of the first action, so use markers for this.
+
 ## MCP server
 `pip install usb-rea` then add `usb-rea mcp` as a stdio server. Tools: `capture_start`, `capture_stop`, `mark_action`, `diff_actions`, `report`, `scaffold_driver`, `hid_descriptor` (decode a HID report descriptor / report payloads), `wireshark_dissector`, `replay_packet` (refuses unless the human confirmed). Analysis tools accept the same `labels` argument as the CLI for marker-free captures.
 
@@ -202,7 +230,8 @@ usb-rea hid capture.pcapng --decode "10ff0d1d000000" --type Output
 - [x] on/off status flags: `seen pump on` / `seen pump off` name single bits of reply bytes
 - [x] modes / enum values (`seen mode turbo`) and signed readings (`seen temp -5`)
 - [x] small levels packed beside flags (`seen battery 3` in bits 1-3 of a status byte)
-- [ ] state machines (multi-step handshakes)
+- [x] handshakes: messages sent once when the app opens the device, replayed by the driver with session tokens copied from live replies
+- [ ] state machines beyond a fixed handshake (retries, branching on replies, commands only valid in some states)
 
 ## Legal
 Reverse engineering for interoperability is permitted (EU Directive 2009/24/EC Art. 6, US DMCA §1201(f)). usb-rea only analyzes traffic of devices you own and never redistributes vendor code.

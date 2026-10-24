@@ -48,6 +48,9 @@ def analyze(capture: str | Path, markers: str | Path | None = None, device: int 
                         for b in background]
     from .responses import analyze_responses
     proto.responses = analyze_responses(everything, proto.commands, background, seen)
+    from .handshake import find_handshake
+    # messages sent once before the first action; a reused session token also adds a note to the command
+    proto.handshake = find_handshake(everything, background, marks, proto.commands, t0)
     proto.observations = [{k: o[k] for k in ("label", "time", "name", "value")} | {"matched": [
         f"{r.query} {_span(f)}" for r in proto.responses for f in r.fields
         if f.name == o["name"] and any(x[3] == o["time"] for x in f.observed)]} for o in seen]

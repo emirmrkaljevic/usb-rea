@@ -11,6 +11,8 @@ def render(proto: Protocol, capture: str = "", sha256: str = "") -> str:
     ids = f"{proto.vid:04x}:{proto.pid:04x}" if proto.vid is not None else "unknown (no GET_DESCRIPTOR in capture)"
     L += [f"Device: `{ids}`", "",
           "Frame numbers match Wireshark's `frame.number`; open the capture and jump to them to verify each claim.", ""]
+    if proto.handshake:
+        L += _handshake(proto)
     hid_by_cmd = {k: v for h in proto.hid for k, v in h.get("commands", {}).items()}
     for c in [x for c0 in proto.commands for x in (c0, *c0.steps)]:
         chan = f"{XFER_NAMES.get(c.xfer_type)} EP 0x{c.endpoint:02x}"
@@ -58,6 +60,46 @@ def render(proto: Protocol, capture: str = "", sha256: str = "") -> str:
     if proto.unmatched:
         L += ["## Actions with no host→device data", ""] + [f"- {u}" for u in proto.unmatched] + [""]
     return "\n".join(L)
+
+
+def _handshake(proto: Protocol) -> list[str]:
+    L = ["## Handshake (sent once, before the first action)", "",
+         "Host→device messages captured before your first action marker that are not background polls "
+         "and are never sent again later: what the vendor app sends when it opens the device. The "
+         "generated driver replays them in this order in `open()` and checks each reply against "
+         "*Expected* (`??` bytes are a session token or a checksum and are not compared; a checksum is "
+         "verified instead). Each message was seen once, so a byte that changes from session to session "
+         "but is never reused looks constant here: pass `check=False` if a replay is refused.", "",
+         "| Step | Channel | Request | Frame | Reply | Frame | Expected |", "|---|---|---|---|---|---|---|"]
+    for s in proto.handshake:
+        chan = _chan(s["endpoint"], s["xfer_type"], bytes.fromhex(s["setup"]) if s["setup"] else None)
+        req = "(control read)" if s["read"] else f"`{s['request']}`"
+        rep = (f"`{s['reply']}`", s["reply_frame"], f"`{s['expect']}`") if s["reply"] else ("none", "-", "-")
+        L.append(f"| {s['step']} | {chan} | {req} | {s['frame']} | {rep[0]} | {rep[1]} | {rep[2]} |")
+    L.append("")
+    for s in proto.handshake:
+        for u in s["uses"]:
+            L.append(f"- Step {s['step']} request bytes {u['offset']}-{u['offset'] + u['width'] - 1} repeat "
+                     f"bytes {u['reply_offset']}-{u['reply_offset'] + u['width'] - 1} of the reply to step "
+                     f"{u['step']}: a session token or device id; the driver copies them from the live reply.")
+        for t in s["tokens"]:
+            for u in (u for u in t["used_by"] if "command" in u):
+                pk = f" (packet {u['packet'] + 1})" if u["packet"] else ""
+                L.append(f"- Command `{u['command']}`{pk} bytes {u['offset']}-{u['offset'] + t['width'] - 1} "
+                         f"repeat bytes {t['reply_offset']}-{t['reply_offset'] + t['width'] - 1} of the reply "
+                         f"to step {s['step']}; the driver fills them in from the live reply.")
+        for e in s["echoes"]:
+            L.append(f"- Step {s['step']} reply bytes {e['offset']}-{e['offset'] + e['width'] - 1} echo request "
+                     f"bytes {e['query_offset']}-{e['query_offset'] + e['width'] - 1}.")
+    cks = {(k, c["algo"], tuple(c["covers"])) for s in proto.handshake
+           for k, c in (("request", s["request_checksum"]), ("reply", s["reply_checksum"])) if c}
+    for kind in ("request", "reply"):
+        algos = sorted({a for k, a, _ in cks if k == kind})
+        for a in algos:
+            L.append(f"- Every handshake {kind} ends in `{a}` of the bytes before it"
+                     + (" (from byte 1)" if any(k == kind and x == a and c[0] for k, x, c in cks) else "")
+                     + ("; the driver recomputes it." if kind == "request" else "; the driver checks it."))
+    return L + [""]
 
 
 def _observations(proto: Protocol) -> list[str]:

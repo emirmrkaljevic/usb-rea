@@ -171,6 +171,7 @@ class Protocol:
     background: list[dict] = field(default_factory=list)  # periodic polls/keep-alives set aside by the pipeline
     responses: list = field(default_factory=list)  # decoded device replies (responses.Response)
     observations: list = field(default_factory=list)  # 'seen ...' markers and the reply bytes they named
+    handshake: list = field(default_factory=list)  # messages sent once before the first action (handshake.py)
 
     def to_dict(self):
         d = asdict(self)

@@ -25,7 +25,7 @@ def _put(b, off, width, endian, v):
     b[off:off + width] = v.to_bytes(width, "little" if endian == "le" else "big")
 
 
-def encode(spec, values, seq=0, prev=()):
+def encode(spec, values, seq=0, prev=(), session=()):
     b = bytearray.fromhex(spec["template"])
     for f in spec["fields"]:
         kind, off, w, end = f["kind"], f["offset"], f["width"], f["endian"]
@@ -45,6 +45,9 @@ def encode(spec, values, seq=0, prev=()):
             _put(b, off, w, end, f["table"][v])
         elif kind == "counter":
             _put(b, off, w, end, seq * f["step"])
+        elif kind == "session" and len(session) > f["step"] and session[f["step"]]:
+            # bytes copied from a handshake reply of this session (else the captured ones stay)
+            b[off:off + w] = session[f["step"]][f["at"]:f["at"] + w]
     for f in spec["fields"]:
         if f["kind"] == "checksum":
             a, z = f["covers"]
@@ -53,13 +56,28 @@ def encode(spec, values, seq=0, prev=()):
     return bytes(b)
 
 
+def _check_reply(step, spec, data):
+    """Compare a handshake reply with the captured one: fixed bytes must match, a checksum must hold."""
+    want = spec["expect"].split()
+    bad = len(data) < len(want) or any(w != "??" and int(w, 16) != data[k] for k, w in enumerate(want))
+    ck = spec.get("checksum")
+    if not bad and ck:
+        n, w = len(want), ck["width"]
+        got = int.from_bytes(data[n - w:n], "little" if ck["endian"] == "le" else "big")
+        bad = got != compute(ck["algo"], data[ck["covers"][0]:ck["covers"][1]])
+    if bad:
+        raise RuntimeError(f"handshake step {{step}}: reply {{bytes(data).hex(' ')}}, expected {{spec['expect']}}"
+                           " (Device(handshake=False) or open(check=False) skips the check)")
+
+
 class Device:
-    def __init__(self, dev=None):
+    def __init__(self, dev=None, handshake=True):
         self.dev = dev or usb.core.find(idVendor=VID, idProduct=PID)
         if self.dev is None:
             raise RuntimeError(f"device {{VID:04x}}:{{PID:04x}} not found")
         self.seq = 0
         self.sent = []
+        self.session = []
         for cfg in self.dev:
             for intf in cfg:
                 if self.dev.is_kernel_driver_active(intf.bInterfaceNumber):
@@ -67,6 +85,35 @@ class Device:
                         self.dev.detach_kernel_driver(intf.bInterfaceNumber)
                     except usb.core.USBError:
                         pass
+        if handshake and HANDSHAKE:
+            self.open()
+
+    def open(self, check=True, timeout=1000):
+        """Replay the handshake the vendor app sends when it opens the device (report.md, Handshake).
+
+        Bytes taken from an earlier reply (session token) are copied from this session's replies.
+        With check=True a reply whose fixed bytes or checksum differ from the capture raises RuntimeError.
+        """
+        self.session = []
+        for i, step in enumerate(HANDSHAKE, 1):
+            reply = None
+            if step["read"]:
+                bm, req, wv, wi, n = step["setup"]
+                reply = bytes(self.dev.ctrl_transfer(bm, req, wv, wi, n, timeout))
+            else:
+                data = encode(step, (), 0, (), self.session)
+                if step["setup"]:
+                    bm, req, wv, wi = step["setup"]
+                    self.dev.ctrl_transfer(bm, req, wv, wi, data)
+                else:
+                    self.dev.write(step["endpoint"], data)
+                if step["reply"]:
+                    r = step["reply"]
+                    reply = bytes(self.dev.read(r["endpoint"], max(64, r["length"]), timeout))
+            if check and step["reply"]:
+                _check_reply(i, step["reply"], reply)
+            self.session.append(reply)
+        return self.session
 
     def _send(self, spec, *values, prev=None):
         if prev is None:
@@ -75,7 +122,7 @@ class Device:
             first = {{k: v for k, v in spec.items() if k != "then"}}
             return [self._send(step, *values, prev=self.sent) for step in [first, *spec["then"]]]
         self.seq += 1
-        data = encode(spec, values, self.seq, self.sent)
+        data = encode(spec, values, self.seq, self.sent, self.session)
         self.sent.append(data)
         if spec["setup"]:
             bm, req, wv, wi = spec["setup"]
@@ -177,6 +224,15 @@ def generate(proto: Protocol) -> str:
                   for f in c.fields if f.kind in ("value", "bitfield", "lookup", "counter", "checksum")]
         return dict(template=c.template().hex(), endpoint=c.endpoint, setup=setup, fields=fields)
 
+    def command_spec(c):
+        spec = spec_of(c)
+        spec["fields"] += links.get((c.name, 0), [])
+        if c.steps:
+            spec["then"] = [spec_of(x) for x in c.steps]
+            for k, x in enumerate(spec["then"], 1):
+                x["fields"] += links.get((c.name, k), [])
+        return spec
+
     def reply_of(r, prefix):
         setup = None
         if r.source == "control read" and r.query_setup:
@@ -196,6 +252,38 @@ def generate(proto: Protocol) -> str:
                      signed=f.signed or None, table=f.table if f.kind == "reading" else None)
             fields.append({k: v for k, v in d.items() if v is not None})
         return dict(length=r.length, endpoint=r.endpoint, setup=setup, after=r.packet, fields=fields)
+
+    # handshake: replayed by Device.open(); session tokens are copied from this session's replies
+    links: dict[tuple[str, int], list[dict]] = {}
+    hs = []
+    for st in proto.handshake:
+        for t in st["tokens"]:
+            for u in t["used_by"]:
+                if "command" in u:
+                    links.setdefault((u["command"], u["packet"]), []).append(
+                        dict(kind="session", offset=u["offset"], width=t["width"], endian="le",
+                             step=st["step"] - 1, at=t["reply_offset"]))
+        setup = None
+        if st["setup"]:
+            q = bytes.fromhex(st["setup"])
+            setup = (q[0], q[1], q[2] | q[3] << 8, q[4] | q[5] << 8) + ((q[6] | q[7] << 8,) if st["read"] else ())
+        fields = [dict(kind="session", offset=u["offset"], width=u["width"], endian="le",
+                       step=u["step"] - 1, at=u["reply_offset"]) for u in st["uses"]]
+        ck = st["request_checksum"]
+        if ck:
+            n = len(bytes.fromhex(st["request"]))
+            fields.append(dict(kind="checksum", offset=n - ck["width"], width=ck["width"], endian=ck["endian"],
+                               algo=ck["algo"], covers=tuple(ck["covers"])))
+        reply = None
+        if st["reply"]:
+            reply = dict(endpoint=st["reply_endpoint"], length=len(bytes.fromhex(st["reply"])), expect=st["expect"])
+            if st["reply_checksum"]:
+                c = st["reply_checksum"]
+                reply["checksum"] = dict(algo=c["algo"], width=c["width"], endian=c["endian"], covers=tuple(c["covers"]))
+        hs.append(dict(template=st["request"].replace(" ", ""), endpoint=st["endpoint"], setup=setup,
+                       read=st["read"], fields=fields, reply=reply))
+    specs.append("# handshake, evidence frames " + ", ".join(str(st["frame"]) for st in proto.handshake) + "\n" if hs else "")
+    specs.append(f"HANDSHAKE = {hs!r}\n")
 
     queries = []
     names = {_ident(c.name) for c in proto.commands}
@@ -233,9 +321,7 @@ def generate(proto: Protocol) -> str:
 
     for c in proto.commands:
         const = _ident(c.name).upper()
-        spec = spec_of(c)
-        if c.steps:
-            spec["then"] = [spec_of(x) for x in c.steps]
+        spec = command_spec(c)
         specs.append(f"{const} = {spec!r}\n")
         args = ", ".join(f"v{i}" for i in range(c.arity))
         sig = f"self, {args}" if args else "self"
