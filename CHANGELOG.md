@@ -1,6 +1,7 @@
 # Changelog
 
-## Unreleased
+## v0.7.0 (2026-10-24)
+Session handshakes and small levels packed into part of a byte.
 - handshakes: host→device messages (and class/vendor control reads) sent before the first action
   marker, that are not background polls and are never sent again, are reported as the session setup
   the vendor app does when it opens the device, each with its reply. A run of 3+ reply bytes reused
