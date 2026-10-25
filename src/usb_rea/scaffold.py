@@ -96,24 +96,34 @@ class Device:
         """
         self.session = []
         for i, step in enumerate(HANDSHAKE, 1):
-            reply = None
-            if step["read"]:
-                bm, req, wv, wi, n = step["setup"]
-                reply = bytes(self.dev.ctrl_transfer(bm, req, wv, wi, n, timeout))
-            else:
-                data = encode(step, (), 0, (), self.session)
-                if step["setup"]:
-                    bm, req, wv, wi = step["setup"]
-                    self.dev.ctrl_transfer(bm, req, wv, wi, data)
-                else:
-                    self.dev.write(step["endpoint"], data)
-                if step["reply"]:
-                    r = step["reply"]
-                    reply = bytes(self.dev.read(r["endpoint"], max(64, r["length"]), timeout))
-            if check and step["reply"]:
-                _check_reply(i, step["reply"], reply)
+            tries = step.get("tries", 1)   # the vendor app resent this step when it got no or another reply
+            for attempt in range(1, tries + 1):
+                try:
+                    reply = self._step(step, timeout)
+                    if check and step["reply"]:
+                        _check_reply(i, step["reply"], reply)
+                    break
+                except (usb.core.USBError, RuntimeError):
+                    if attempt == tries:
+                        raise
             self.session.append(reply)
         return self.session
+
+    def _step(self, step, timeout):
+        """Send one handshake step and return its reply (None when the app got none)."""
+        if step["read"]:
+            bm, req, wv, wi, n = step["setup"]
+            return bytes(self.dev.ctrl_transfer(bm, req, wv, wi, n, timeout))
+        data = encode(step, (), 0, (), self.session)
+        if step["setup"]:
+            bm, req, wv, wi = step["setup"]
+            self.dev.ctrl_transfer(bm, req, wv, wi, data)
+        else:
+            self.dev.write(step["endpoint"], data)
+        if step["reply"]:
+            r = step["reply"]
+            return bytes(self.dev.read(r["endpoint"], max(64, r["length"]), timeout))
+        return None
 
     def _send(self, spec, *values, prev=None):
         if prev is None:
@@ -280,8 +290,11 @@ def generate(proto: Protocol) -> str:
             if st["reply_checksum"]:
                 c = st["reply_checksum"]
                 reply["checksum"] = dict(algo=c["algo"], width=c["width"], endian=c["endian"], covers=tuple(c["covers"]))
-        hs.append(dict(template=st["request"].replace(" ", ""), endpoint=st["endpoint"], setup=setup,
-                       read=st["read"], fields=fields, reply=reply))
+        step = dict(template=st["request"].replace(" ", ""), endpoint=st["endpoint"], setup=setup,
+                    read=st["read"], fields=fields, reply=reply)
+        if st.get("retries"):
+            step["tries"] = len(st["retries"]) + 1
+        hs.append(step)
     specs.append("# handshake, evidence frames " + ", ".join(str(st["frame"]) for st in proto.handshake) + "\n" if hs else "")
     specs.append(f"HANDSHAKE = {hs!r}\n")
 

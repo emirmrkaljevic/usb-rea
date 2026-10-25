@@ -78,6 +78,12 @@ def _handshake(proto: Protocol) -> list[str]:
         L.append(f"| {s['step']} | {chan} | {req} | {s['frame']} | {rep[0]} | {rep[1]} | {rep[2]} |")
     L.append("")
     for s in proto.handshake:
+        if s.get("retries"):
+            got = ", ".join(f"frame {r['frame']} ({'reply `' + r['reply'] + '`' if r['reply'] else 'no reply'})"
+                            for r in s["retries"])
+            L.append(f"- Step {s['step']} was sent {len(s['retries']) + 1} times in a row: {got}, then answered "
+                     f"in frame {s['reply_frame'] if s['reply'] else '-'}. The driver resends it up to "
+                     f"{len(s['retries']) + 1} times when the reply times out or differs from *Expected*.")
         for u in s["uses"]:
             L.append(f"- Step {s['step']} request bytes {u['offset']}-{u['offset'] + u['width'] - 1} repeat "
                      f"bytes {u['reply_offset']}-{u['reply_offset'] + u['width'] - 1} of the reply to step "

@@ -13,6 +13,12 @@ With one copy of each message there is nothing to diff, so the claims are delibe
   in every captured copy of a command;
 - an echo is a run of 3+ request bytes that the reply repeats (a host challenge sent back).
 Every other reply byte is expected to come back unchanged when a driver replays the handshake.
+
+Retries: when the app sends the same message again straight away (identical channel and bytes, nothing
+else sent in between but background polls), because the first copy got no reply or a different (busy/not ready) one, the
+copies are one step. The step keeps the reply to the last copy and lists the earlier copies under
+`retries`, so the driver resends a step that times out or answers differently, as many times as the
+app did.
 """
 from __future__ import annotations
 from bisect import bisect_right
@@ -92,10 +98,27 @@ def find_handshake(transfers: list[Transfer], background: list[dict], marks: lis
 
     later = {(t.key(), t.data) for t in ordered if t.ts >= first and query(t)}
     qs = [t for t in ordered if t.ts < first and query(t) and id(t) not in polls
-          and (t.key(), t.data) not in later][:MAX_STEPS]
+          and (t.key(), t.data) not in later]
+    def between(a, b):   # messages sent after a and before b, background polls aside
+        return [x for x in ordered[bisect_right(frames, a.frame):bisect_right(frames, b.frame) - 1]
+                if query(x) and id(x) not in polls]
+
+    groups: list[list[Transfer]] = []
+    for t in qs:   # consecutive identical copies are retries of one step
+        prev = groups[-1][-1] if groups else None
+        if prev is not None and (prev.key(), prev.data) == (t.key(), t.data) and not between(prev, t):
+            groups[-1].append(t)
+        else:
+            groups.append([t])
+    groups = groups[:MAX_STEPS]
     steps = []
-    for i, q in enumerate(qs, 1):
+    for i, g in enumerate(groups, 1):
+        q = g[-1]
         r = _reply(q, ordered, frames)
+        tries = []
+        for c in g[:-1]:
+            cr = _reply(c, ordered, frames)
+            tries.append({"frame": c.frame, "time": round(c.ts - t0, 3), "reply": cr.data.hex(" ") if cr else None})
         steps.append({
             "step": i, "frame": q.frame, "time": round(q.ts - t0, 3),
             "endpoint": q.endpoint, "xfer_type": q.xfer_type, "setup": q.setup.hex() if q.setup else None,
@@ -104,7 +127,7 @@ def find_handshake(transfers: list[Transfer], background: list[dict], marks: lis
             "reply_endpoint": r.endpoint if r else None, "reply_xfer_type": r.xfer_type if r else None,
             "latency_ms": round((r.ts - q.ts) * 1000, 1) if r else None,
             "request_checksum": None, "reply_checksum": None, "uses": [], "tokens": [], "echoes": [],
-            "expect": None,
+            "expect": None, "retries": tries,
         })
     if not steps:
         return []

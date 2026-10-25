@@ -152,3 +152,51 @@ def test_cli_demo_fan_shows_handshake(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "handshake (3 messages" in out and "bytes 3-6 = token from step 1" in out
     assert "HANDSHAKE = [{" in (tmp_path / "d" / "fan_driver.py").read_text()
+
+
+def _retry_capture(path):
+    """hello sent twice (first copy unanswered), auth answered 'busy' once and resent, then commands."""
+    w = UsbmonWriter()
+    w.control_in(T0, bytes([0x80, 6, 0, 1, 0, 0, 18, 0]), device_descriptor())
+    token = bytes([0x12, 0x34, 0x56, 0x78])
+    w.out(T0 + 0.1, 0x01, bytes([0x01, 0, 0, 0]))                  # hello, no reply
+    w.out(T0 + 0.35, 0x01, bytes([0x01, 0, 0, 0]))                 # hello again
+    w.in_(T0 + 0.353, 0x81, b"\x81" + token)
+    w.out(T0 + 0.4, 0x01, b"\x03" + token)                         # auth
+    w.in_(T0 + 0.403, 0x81, bytes([0xE0, 0x01]))                   # busy
+    w.out(T0 + 0.5, 0x01, b"\x03" + token)                         # auth again
+    w.in_(T0 + 0.503, 0x81, bytes([0x83, 0x00]))
+    marks = []
+    for i, v in enumerate((10, 20, 30, 40)):
+        t = T0 + 1 + i
+        w.out(t + 0.3, 0x01, b"\x02" + token + bytes([v]))
+        marks.append({"label": f"level {v}", "start": t, "end": t + 0.9})
+    w.save(path)
+    path.with_suffix(".pcap.actions.json").write_text(json.dumps(marks))
+    return path
+
+
+def test_retries_are_one_step(tmp_path):
+    p = analyze(_retry_capture(tmp_path / "retry.pcap"))
+    hs = p.handshake
+    assert [s["request"] for s in hs] == ["01 00 00 00", "03 12 34 56 78"]
+    assert [len(s["retries"]) for s in hs] == [1, 1]
+    assert hs[0]["retries"][0]["reply"] is None and hs[1]["retries"][0]["reply"] == "e0 01"
+    assert hs[0]["reply"] == "81 12 34 56 78" and hs[1]["reply"] == "83 00"
+    assert hs[1]["uses"] == [{"step": 1, "reply_offset": 1, "offset": 1, "width": 4}]
+    assert "Step 1 was sent 2 times in a row" in render(p)
+
+
+def test_driver_retries_a_step(tmp_path):
+    import usb.core
+    p = analyze(_retry_capture(tmp_path / "retry.pcap"))
+    drv = _driver(tmp_path, p, "drv_retry")
+    tok = b"\xaa\xbb\xcc\xdd"
+    # hello times out once, auth answers busy once: both are resent, the token is this session's
+    fake, sent = _fake([usb.core.USBError("timeout"), b"\x81" + tok, b"\xe0\x01", b"\x83\x00"])
+    d = drv.Device(fake)
+    assert [s for _, s in sent] == [bytes([1, 0, 0, 0])] * 2 + [b"\x03" + tok] * 2
+    assert d.session == [b"\x81" + tok, b"\x83\x00"]
+    fake, _ = _fake([b"\x81" + tok, b"\xe0\x01", b"\xe0\x01"])     # still busy after the app's retries
+    with pytest.raises(RuntimeError, match="handshake step 2"):
+        drv.Device(fake)

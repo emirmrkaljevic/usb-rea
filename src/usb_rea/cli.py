@@ -182,6 +182,8 @@ def _demo(outdir: Path, device: str = "lamp") -> int:
         for st in proto.handshake:
             reuse = "".join(f", bytes {u['offset']}-{u['offset'] + u['width'] - 1} = token from step {u['step']}"
                             for u in st["uses"])
+            if st.get("retries"):
+                reuse += f", sent {len(st['retries']) + 1}x (the app retried)"
             print(f"  {st['step']}. {st['request'] or '(control read)'} -> {st['expect'] or 'no reply'}{reuse}")
     if proto.responses:
         print("\ndevice replies:")

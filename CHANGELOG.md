@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+- handshake retries: identical messages the app sends again straight away (after no reply or a
+  different, busy reply) are one handshake step with the earlier copies under `retries`; the report
+  lists them and the driver's `open()` resends such a step up to as many times as the app did when
+  the reply times out or does not match.
+
 ## v0.7.0 (2026-10-24)
 Session handshakes and small levels packed into part of a byte.
 - handshakes: host→device messages (and class/vendor control reads) sent before the first action

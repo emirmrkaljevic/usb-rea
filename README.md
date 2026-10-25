@@ -160,9 +160,14 @@ session's live replies into later steps and into commands, request checksums are
 each reply is checked against the captured one (`??` for token and checksum bytes, checksums
 verified), raising `RuntimeError` on a mismatch. JSON/MCP output has it as `handshake`.
 
+Retries are recognised: when the app sends the same message again straight away because the first
+copy got no reply or a different one (a device that answers "busy" until it is ready), the copies
+are one step with the earlier ones listed under `retries`. The driver then resends that step up to
+as many times as the app did when the reply times out or does not match.
+
 Limits: every handshake message is seen once, so a byte that changes per session but is never reused
 (a random nonce the device only reports) looks fixed; `open(check=False)` replays without checking.
-Only fixed, linear sequences are replayed: no retries, no branching on the reply, no handshake that
+Only fixed, linear sequences are replayed (with retries as captured): no branching on the reply, no handshake that
 is repeated later (e.g. after a mode switch), and a token must be copied verbatim (a token that is
 transformed, such as a challenge answered with a hash, is not recognised). With `--labels` (no
 timestamps) the handshake is part of the first action, so use markers for this.
@@ -231,7 +236,8 @@ usb-rea hid capture.pcapng --decode "10ff0d1d000000" --type Output
 - [x] modes / enum values (`seen mode turbo`) and signed readings (`seen temp -5`)
 - [x] small levels packed beside flags (`seen battery 3` in bits 1-3 of a status byte)
 - [x] handshakes: messages sent once when the app opens the device, replayed by the driver with session tokens copied from live replies
-- [ ] state machines beyond a fixed handshake (retries, branching on replies, commands only valid in some states)
+- [x] handshake retries: a step the app resent after no reply or a busy reply is resent by the driver too
+- [ ] state machines beyond a fixed handshake (branching on replies, commands only valid in some states)
 
 ## Legal
 Reverse engineering for interoperability is permitted (EU Directive 2009/24/EC Art. 6, US DMCA §1201(f)). usb-rea only analyzes traffic of devices you own and never redistributes vendor code.
