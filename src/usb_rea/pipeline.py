@@ -39,6 +39,13 @@ def analyze(capture: str | Path, markers: str | Path | None = None, device: int 
     else:
         marks = load_markers(markers or default_markers(capture))
     seen = observations(marks, t0)
+    from .handshake import find_reopens, reopen_ids
+    # the app may send its whole handshake again mid-capture (device woke up, app reconnected):
+    # that block is session setup, so it stays out of the actions
+    reopens = find_reopens(everything, background, marks)
+    if reopens:
+        drop = reopen_ids(reopens, everything)
+        ts = [t for t in ts if id(t) not in drop]
     acts = assign(ts, marks)
     proto = infer(acts, vid, pid)
     proto.hid = hid_summary(ts, proto)
@@ -50,7 +57,7 @@ def analyze(capture: str | Path, markers: str | Path | None = None, device: int 
     proto.responses = analyze_responses(everything, proto.commands, background, seen)
     from .handshake import find_handshake
     # messages sent once before the first action; a reused session token also adds a note to the command
-    proto.handshake = find_handshake(everything, background, marks, proto.commands, t0)
+    proto.handshake = find_handshake(everything, background, marks, proto.commands, t0, reopens)
     proto.observations = [{k: o[k] for k in ("label", "time", "name", "value")} | {"matched": [
         f"{r.query} {_span(f)}" for r in proto.responses for f in r.fields
         if f.name == o["name"] and any(x[3] == o["time"] for x in f.observed)]} for o in seen]

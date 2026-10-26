@@ -200,3 +200,39 @@ def test_driver_retries_a_step(tmp_path):
     fake, _ = _fake([b"\x81" + tok, b"\xe0\x01", b"\xe0\x01"])     # still busy after the app's retries
     with pytest.raises(RuntimeError, match="handshake step 2"):
         drv.Device(fake)
+
+
+@pytest.mark.parametrize("kw", [{}, {"poll": 0.5, "observe": True}, {"poll": 0.25, "transport": "control"}])
+def test_handshake_sent_again_is_a_reopen(tmp_path, kw):
+    """The app opens the session again halfway (new token): still the handshake, not part of an action."""
+    base = analyze(make_capture(tmp_path / "a.pcap", device="fan", handshake=True, **kw)[0])
+    p = analyze(make_capture(tmp_path / "b.pcap", device="fan", handshake=True, reopen=True, **kw)[0])
+    assert [s["request"][:8] for s in p.handshake] == ["5a 00 01", "5a 00 02", "5a 00 03"]
+    assert [len(s["reopens"]) for s in p.handshake] == [1, 1, 1]
+    assert [s["expect"] for s in p.handshake] == [s["expect"] for s in base.handshake]
+    assert [(c.name, [f.describe() for f in c.fields]) for c in p.commands] == \
+        [(c.name, [f.describe() for f in c.fields]) for c in base.commands]
+    assert "sent the whole handshake again later" in render(p)
+    json.dumps(p.to_dict(), default=str)
+
+
+def test_partial_repeat_is_not_a_reopen(tmp_path):
+    """Only the hello sent again later (no auth, no start): not a reopen, so hello is not a handshake step."""
+    w = UsbmonWriter()
+    w.control_in(T0, bytes([0x80, 6, 0, 1, 0, 0, 18, 0]), device_descriptor())
+    w.out(T0 + 0.1, 0x01, bytes([0x10, 0x01, 0x02, 0x03]))
+    w.in_(T0 + 0.105, 0x81, bytes([0x90, 0x00]))
+    w.out(T0 + 0.2, 0x01, bytes([0x11, 0x00, 0x00, 0x00]))
+    w.in_(T0 + 0.205, 0x81, bytes([0x91, 0x00]))
+    marks = []
+    for i, v in enumerate((10, 20, 30, 40)):
+        t = T0 + 1 + i
+        w.out(t + 0.3, 0x01, bytes([0x30, v, 0x00, 0x00]))
+        if i == 2:
+            w.out(t + 0.6, 0x01, bytes([0x10, 0x01, 0x02, 0x03]))
+        marks.append({"label": f"level {v}", "start": t, "end": t + 0.9})
+    cap = tmp_path / "x.pcap"
+    w.save(cap)
+    (tmp_path / "x.pcap.actions.json").write_text(json.dumps(marks))
+    hs = analyze(cap).handshake
+    assert [s["request"] for s in hs] == ["11 00 00 00"] and hs[0]["reopens"] == []

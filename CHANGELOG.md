@@ -5,6 +5,10 @@
   different, busy reply) are one handshake step with the earlier copies under `retries`; the report
   lists them and the driver's `open()` resends such a step up to as many times as the app did when
   the reply times out or does not match.
+- handshake reopens: when the app sends the whole handshake again later (device woke up, app
+  reconnected), each message matching its step except for the checksum or a new session token,
+  that block is kept out of the actions and listed under `reopens`; the report notes it. Synthetic
+  fan: `make_capture(..., handshake=True, reopen=True)`.
 
 ## v0.7.0 (2026-10-24)
 Session handshakes and small levels packed into part of a byte.

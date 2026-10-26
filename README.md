@@ -165,10 +165,17 @@ copy got no reply or a different one (a device that answers "busy" until it is r
 are one step with the earlier ones listed under `retries`. The driver then resends that step up to
 as many times as the app did when the reply times out or does not match.
 
+Reopens are recognised too: when the app sends the whole handshake again later in the capture (the
+device slept or was replugged, or the app reconnected), with each message on the same channel and
+length and only the checksum or bytes copied from that block's own replies (a new session token)
+changed, the block is session setup, not part of an action. It is kept out of the actions, the
+steps list it under `reopens`, and the report says so.
+
 Limits: every handshake message is seen once, so a byte that changes per session but is never reused
 (a random nonce the device only reports) looks fixed; `open(check=False)` replays without checking.
-Only fixed, linear sequences are replayed (with retries as captured): no branching on the reply, no handshake that
-is repeated later (e.g. after a mode switch), and a token must be copied verbatim (a token that is
+Only fixed, linear sequences are replayed (with retries as captured): no branching on the reply, a later
+handshake must repeat the whole sequence to count as a reopen (a partial one, e.g. after a mode
+switch, is not recognised), and a token must be copied verbatim (a token that is
 transformed, such as a challenge answered with a hash, is not recognised). With `--labels` (no
 timestamps) the handshake is part of the first action, so use markers for this.
 
@@ -237,6 +244,7 @@ usb-rea hid capture.pcapng --decode "10ff0d1d000000" --type Output
 - [x] small levels packed beside flags (`seen battery 3` in bits 1-3 of a status byte)
 - [x] handshakes: messages sent once when the app opens the device, replayed by the driver with session tokens copied from live replies
 - [x] handshake retries: a step the app resent after no reply or a busy reply is resent by the driver too
+- [x] handshake reopens: the whole handshake sent again mid-capture is kept out of the actions
 - [ ] state machines beyond a fixed handshake (branching on replies, commands only valid in some states)
 
 ## Legal

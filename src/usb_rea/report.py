@@ -84,6 +84,11 @@ def _handshake(proto: Protocol) -> list[str]:
             L.append(f"- Step {s['step']} was sent {len(s['retries']) + 1} times in a row: {got}, then answered "
                      f"in frame {s['reply_frame'] if s['reply'] else '-'}. The driver resends it up to "
                      f"{len(s['retries']) + 1} times when the reply times out or differs from *Expected*.")
+        if s["step"] == 1 and s.get("reopens"):
+            at = ", ".join(f"frame {r['frame']} ({r['time']} s)" for r in s["reopens"])
+            L.append(f"- The app sent the whole handshake again later, starting at {at}: it reopened the "
+                     "session (the device woke up or reconnected). Those messages are left out of the actions; "
+                     "call `open()` again when the device stops answering after sleep or a replug.")
         for u in s["uses"]:
             L.append(f"- Step {s['step']} request bytes {u['offset']}-{u['offset'] + u['width'] - 1} repeat "
                      f"bytes {u['reply_offset']}-{u['reply_offset'] + u['width'] - 1} of the reply to step "

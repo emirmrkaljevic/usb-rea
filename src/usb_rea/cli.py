@@ -184,6 +184,8 @@ def _demo(outdir: Path, device: str = "lamp") -> int:
                             for u in st["uses"])
             if st.get("retries"):
                 reuse += f", sent {len(st['retries']) + 1}x (the app retried)"
+            if st.get("reopens"):
+                reuse += f", sent again {len(st['reopens'])}x later (session reopened)"
             print(f"  {st['step']}. {st['request'] or '(control read)'} -> {st['expect'] or 'no reply'}{reuse}")
     if proto.responses:
         print("\ndevice replies:")

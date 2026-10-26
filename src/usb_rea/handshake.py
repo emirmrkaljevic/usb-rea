@@ -19,6 +19,12 @@ else sent in between but background polls), because the first copy got no reply 
 copies are one step. The step keeps the reply to the last copy and lists the earlier copies under
 `retries`, so the driver resends a step that times out or answers differently, as many times as the
 app did.
+
+Reopens: when the app sends the whole handshake again later in the capture (after the device slept,
+was replugged, or the app reconnected), that later block is the same session setup, not an action.
+Each later message must match its step on the same channel and length, differing only in the
+request checksum or in bytes copied from the block's own replies (a new session token). The block
+is set aside before actions are inferred and listed under `reopens` on each step.
 """
 from __future__ import annotations
 from bisect import bisect_right
@@ -82,35 +88,118 @@ def _reply(q: Transfer, ordered: list[Transfer], frames: list[int]) -> Transfer 
     return None
 
 
-def find_handshake(transfers: list[Transfer], background: list[dict], marks: list[dict],
-                   commands: list = (), t0: float = 0.0) -> list[dict]:
-    """Handshake steps (dicts, JSON-ready) found before the first action marker."""
-    starts = [m["start"] for m in marks if not is_observation(m["label"])]
-    if not starts:
-        return []
-    first = min(starts)
-    polls = set().union(*(b["ids"] for b in background)) if background else set()
-    ordered = sorted(transfers, key=lambda t: t.frame)
-    frames = [t.frame for t in ordered]
+def _query(t: Transfer) -> bool:
+    return bool((t.is_out and t.data) or is_control_read(t))
 
-    def query(t):
-        return (t.is_out and t.data) or is_control_read(t)
 
-    later = {(t.key(), t.data) for t in ordered if t.ts >= first and query(t)}
-    qs = [t for t in ordered if t.ts < first and query(t) and id(t) not in polls
-          and (t.key(), t.data) not in later]
-    def between(a, b):   # messages sent after a and before b, background polls aside
+def _group(qs: list[Transfer], ordered: list[Transfer], frames: list[int], polls: set) -> list[list[Transfer]]:
+    """Consecutive identical copies (nothing else sent in between but polls) are retries of one step."""
+    def between(a, b):
         return [x for x in ordered[bisect_right(frames, a.frame):bisect_right(frames, b.frame) - 1]
-                if query(x) and id(x) not in polls]
-
+                if _query(x) and id(x) not in polls]
     groups: list[list[Transfer]] = []
-    for t in qs:   # consecutive identical copies are retries of one step
+    for t in qs:
         prev = groups[-1][-1] if groups else None
         if prev is not None and (prev.key(), prev.data) == (t.key(), t.data) and not between(prev, t):
             groups[-1].append(t)
         else:
             groups.append([t])
-    groups = groups[:MAX_STEPS]
+    return groups[:MAX_STEPS]
+
+
+def _setup(transfers, background, marks):
+    starts = [m["start"] for m in marks if not is_observation(m["label"])]
+    if not starts:
+        return None
+    polls = set().union(*(b["ids"] for b in background)) if background else set()
+    ordered = sorted(transfers, key=lambda t: t.frame)
+    return min(starts), polls, ordered, [t.frame for t in ordered]
+
+
+def _same_step(m: Transfer, c: Transfer, replies: list[bytes], ck: dict | None) -> bool:
+    """m is step c sent again: same channel and length, other bytes only checksum or copied from replies."""
+    if m.key() != c.key() or len(m.data or b"") != len(c.data or b"") or is_control_read(m) != is_control_read(c):
+        return False
+    diff = {k for k, (a, b) in enumerate(zip(m.data or b"", c.data or b"")) if a != b}
+    if not diff:
+        return True
+    ok = set()
+    if ck and not is_control_read(m) and int.from_bytes(m.data[-ck["width"]:], "little" if ck["endian"] == "le"
+                                                         else "big") == compute(ck["algo"], m.data[ck["start"]:len(m.data) - ck["width"]]):
+        ok |= _ck_span(ck, len(m.data))
+    for r in replies:
+        for _, b, n in _runs(r, m.data, set(), set()):
+            ok |= set(range(b, b + n))
+    return diff <= ok
+
+
+def find_reopens(transfers: list[Transfer], background: list[dict], marks: list[dict]) -> list[list[list[Transfer]]]:
+    """Later blocks that send the whole pre-action sequence again: one list of copies per step."""
+    st = _setup(transfers, background, marks)
+    if not st:
+        return []
+    first, polls, ordered, frames = st
+    pre = _group([t for t in ordered if t.ts < first and _query(t) and id(t) not in polls], ordered, frames, polls)
+    if len(pre) < 2:
+        return []
+    ck = _checksum([g[-1].data for g in pre if not is_control_read(g[-1])])
+    after = [t for t in ordered if t.ts >= first and _query(t) and id(t) not in polls]
+    blocks, p = [], 0
+    while p < len(after):
+        if (after[p].key(), after[p].data) != (pre[0][-1].key(), pre[0][-1].data):
+            p += 1
+            continue
+        block, replies, q = [], [], p
+        for c in (g[-1] for g in pre):
+            if q >= len(after) or not _same_step(after[q], c, replies, ck):
+                break
+            copies = [after[q]]
+            while q + 1 < len(after) and (after[q + 1].key(), after[q + 1].data) == (after[q].key(), after[q].data) \
+                    and after[q + 1].ts - after[q].ts <= WINDOW:
+                q += 1
+                copies.append(after[q])
+            r = _reply(copies[-1], ordered, frames)
+            replies.append(r.data if r else b"")
+            block.append(copies)
+            q += 1
+        if len(block) == len(pre):
+            blocks.append(block)
+            p = q
+        else:
+            p += 1
+    return blocks
+
+
+def reopen_ids(blocks, transfers) -> set[int]:
+    """ids of the requests and replies of reopen blocks, to set aside before actions are inferred."""
+    ordered = sorted(transfers, key=lambda t: t.frame)
+    frames = [t.frame for t in ordered]
+    out = set()
+    for b in blocks:
+        for copies in b:
+            for c in copies:
+                out.add(id(c))
+                r = _reply(c, ordered, frames)
+                if r is not None:
+                    out.add(id(r))
+    return out
+
+
+def find_handshake(transfers: list[Transfer], background: list[dict], marks: list[dict],
+                   commands: list = (), t0: float = 0.0, reopens: list | None = None) -> list[dict]:
+    """Handshake steps (dicts, JSON-ready) found before the first action marker."""
+    st = _setup(transfers, background, marks)
+    if not st:
+        return []
+    first, polls, ordered, frames = st
+    reopens = find_reopens(transfers, background, marks) if reopens is None else reopens
+    again = {id(c) for b in reopens for copies in b for c in copies}
+    later = {(t.key(), t.data) for t in ordered if t.ts >= first and _query(t) and id(t) not in again}
+    qs = [t for t in ordered if t.ts < first and _query(t) and id(t) not in polls
+          and (t.key(), t.data) not in later]
+    groups = _group(qs, ordered, frames, polls)
+    pre = _group([t for t in ordered if t.ts < first and _query(t) and id(t) not in polls], ordered, frames, polls)
+    where = {id(g[-1]): k for k, g in enumerate(pre)}
     steps = []
     for i, g in enumerate(groups, 1):
         q = g[-1]
@@ -128,6 +217,8 @@ def find_handshake(transfers: list[Transfer], background: list[dict], marks: lis
             "latency_ms": round((r.ts - q.ts) * 1000, 1) if r else None,
             "request_checksum": None, "reply_checksum": None, "uses": [], "tokens": [], "echoes": [],
             "expect": None, "retries": tries,
+            "reopens": [{"frame": b[where[id(q)]][-1].frame, "time": round(b[where[id(q)]][-1].ts - t0, 3)}
+                        for b in reopens if id(q) in where],
         })
     if not steps:
         return []

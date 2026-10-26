@@ -177,7 +177,7 @@ def encode_dial(name: str, values: list[float]) -> bytes:
 def make_capture(path, actions: list[str] | None = None, transport: str = "bulk",
                  noise: bool = True, seed: int = 0, device: str = "lamp",
                  poll: float = 0.0, poll_seq: bool = False, observe: bool = False,
-                 handshake: bool = False) -> tuple[Path, Path]:
+                 handshake: bool = False, reopen: bool = False) -> tuple[Path, Path]:
     """Write <path> (pcap) and <path>.actions.json. Returns both paths.
 
     poll: if > 0, the "vendor app" also sends a status request every `poll` seconds on the
@@ -190,6 +190,9 @@ def make_capture(path, actions: list[str] | None = None, transport: str = "bulk"
     'seen rpm N temp T mode M', 60 ms after the reply, as if the user read the vendor app's screen;
     the status reply then also carries the current mode byte (see FAN_MODE_NAMES), and the first
     reply after a mode change is noted as 'seen mode M'.
+
+    reopen: (fan with handshake) halfway through, the app opens the session again (as after the
+    device slept) with a new session token, between two actions.
 
     device: 'lamp' (see module doc), 'fan' (counter + 16-bit BE + RGB + lookup + CRC16),
     or 'dial' (32-bit LE position + 4-bit brightness bitfield + sum8).
@@ -207,23 +210,27 @@ def make_capture(path, actions: list[str] | None = None, transport: str = "bulk"
     w.control_in(t, bytes([0x80, 6, 0, 1, 0, 0, 18, 0]), device_descriptor())
     if transport == "control":
         w.control_in(t + 0.01, bytes([0x81, 6, 0, 0x22, 0, 0, len(LAMP_HID_DESCRIPTOR), 0]), LAMP_HID_DESCRIPTOR)
-    if handshake:
-        if device != "fan":
-            raise ValueError("only the synthetic fan does a handshake")
-        token = random.Random(seed + 7).randbytes(4)
+    if (handshake or reopen) and device != "fan":
+        raise ValueError("only the synthetic fan does a handshake")
+
+    def open_session(at0, token):
         for i, (req, rep) in enumerate(fan_handshake(token)):
-            at = t + 0.012 + 0.01 * i
+            at = at0 + 0.01 * i
             if transport == "control":
                 w.control_out(at, bytes([0x21, 0x09, 0x00, 0x02, 0, 0, len(req), 0]), req)
             else:
                 w.out(at, 0x01, req)
             w.in_(at + 0.003, 0x81, rep)
+    if handshake:
+        open_session(t + 0.012, random.Random(seed + 7).randbytes(4))
     t += 0.5
     marks = []
     seq = 0x40
     targets = [(0.0, 1000)]   # fan: (time, set RPM), for the status replies
     modes = [(0.0, 0x00)]     # fan: (time, mode byte), reported in the status replies with observe
-    for label in actions:
+    for n_act, label in enumerate(actions):
+        if reopen and handshake and n_act == len(actions) // 2:
+            open_session(t - 0.4, random.Random(seed + 8).randbytes(4))
         start = t
         if noise:
             for _ in range(rnd.randint(1, 3)):
