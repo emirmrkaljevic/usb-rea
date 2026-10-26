@@ -1,6 +1,7 @@
 # Changelog
 
-## Unreleased
+## v0.7.1 (2026-10-26)
+Handshake retries and reopens.
 - handshake retries: identical messages the app sends again straight away (after no reply or a
   different, busy reply) are one handshake step with the earlier copies under `retries`; the report
   lists them and the driver's `open()` resends such a step up to as many times as the app did when
