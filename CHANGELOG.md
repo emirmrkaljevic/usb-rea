@@ -1,6 +1,7 @@
 # Changelog
 
-## Unreleased
+## v0.7.2 (2026-10-27)
+Handshakes that branch on the device's reply.
 - handshake branches: when a later handshake block follows the first one up to a step whose reply
   differs at a byte that is not a token or checksum (a status or mode the device reports) and then
   sends other messages, that step gets `branches` (reply byte offset, each value seen with its count
