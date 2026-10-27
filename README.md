@@ -24,9 +24,11 @@ color  100%  0x5a | counter (+1 per message) | 0x20 | round(value * 1 + 0) | rou
 mode   100%  0x5a | counter (+1 per message) | 0x30 | lookup 1→0x11, 2→0x22, 3→0x47 | 0x00 | 0x00 | u16le crc16_modbus(bytes[0:6])
 
 handshake (3 messages sent once when the app opens the device):
-  1. 5a 00 01 00 00 00 0d 1d -> a5 01 ?? ?? ?? ?? ??
-  2. 5a 00 02 38 b4 e6 52 1e 1e -> a5 02 01 ??, bytes 3-6 = token from step 1
-  3. 5a 00 03 01 00 00 5d 65 -> a5 03 01 ??
+  1. 5a 00 01 00 00 00 0d 1d -> a5 01 ?? ?? ?? ?? ??, sent again 2x later (session reopened)
+  2. 5a 00 02 38 b4 e6 52 1e 1e -> a5 02 ?? ??, bytes 3-6 = token from step 1, sent again 2x later (session reopened)
+     reply byte 2 = 01 (2x, most common): the steps below
+     reply byte 2 = 02 (1x): 5a 00 04 01 00 00 5c 11 -> a5 04 01 ??, 5a 00 03 01 00 00 5d 65 -> a5 03 01 ??
+  3. 5a 00 03 01 00 00 5d 65 -> a5 03 01 ??, sent again 1x later (session reopened)
 
 device replies:
 fan    6/6  0xa5 | = query byte 2 (0x10) | = query byte 1 | u16le round(value * 1 + 0) | sum8(bytes[0:5])
@@ -171,11 +173,25 @@ length and only the checksum or bytes copied from that block's own replies (a ne
 changed, the block is session setup, not part of an action. It is kept out of the actions, the
 steps list it under `reopens`, and the report says so.
 
+Branches on the device's reply are recognised as well: when a later block follows the handshake up
+to some step and then sends other messages, and the reply to that step differs from the first
+session's at a byte that is not a session token or checksum (a status such as "ready" or "needs
+calibration", or a mode), that step gets `branches`: the reply byte's offset, each value seen there
+with how often and the steps the app sent next (the rest of the handshake for the first session's
+value, the other messages up to the next action marker for the others), and the most common value
+as `default`. The byte becomes `??` in *Expected*, the branch messages are kept out of the actions,
+and the report and `usb-rea demo --device fan` list the branches (the synthetic fan's app sends a
+calibrate step when auth answers "needs calibration", `make_capture(..., handshake=True, branch=True)`).
+The driver's `open()` reads that byte of the live reply and replays the matching branch, falling back
+to the most common one for a value the capture never showed; `Device.branches` records the values taken.
+
 Limits: every handshake message is seen once, so a byte that changes per session but is never reused
 (a random nonce the device only reports) looks fixed; `open(check=False)` replays without checking.
-Only fixed, linear sequences are replayed (with retries as captured): no branching on the reply, a later
-handshake must repeat the whole sequence to count as a reopen (a partial one, e.g. after a mode
-switch, is not recognised), and a token must be copied verbatim (a token that is
+Branching is learned from one capture only (the first session and its reopens, so capture the app
+reconnecting in the states you care about), with one branch point per handshake decided by one reply
+byte; branches that join again are stored as separate tails, and a branch block must sit between
+actions (not inside a marker). Otherwise a later handshake must repeat the whole sequence to count as
+a reopen (a partial one, e.g. after a mode switch, is not recognised), and a token must be copied verbatim (a token that is
 transformed, such as a challenge answered with a hash, is not recognised). With `--labels` (no
 timestamps) the handshake is part of the first action, so use markers for this.
 
@@ -245,7 +261,8 @@ usb-rea hid capture.pcapng --decode "10ff0d1d000000" --type Output
 - [x] handshakes: messages sent once when the app opens the device, replayed by the driver with session tokens copied from live replies
 - [x] handshake retries: a step the app resent after no reply or a busy reply is resent by the driver too
 - [x] handshake reopens: the whole handshake sent again mid-capture is kept out of the actions
-- [ ] state machines beyond a fixed handshake (branching on replies, commands only valid in some states)
+- [x] handshake branches: the next steps chosen by a byte of the device's reply, replayed by the driver from the live reply
+- [ ] state machines beyond the handshake (commands only valid in some states)
 
 ## Legal
 Reverse engineering for interoperability is permitted (EU Directive 2009/24/EC Art. 6, US DMCA §1201(f)). usb-rea only analyzes traffic of devices you own and never redistributes vendor code.

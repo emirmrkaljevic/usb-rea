@@ -164,9 +164,10 @@ def _demo(outdir: Path, device: str = "lamp") -> int:
     outdir.mkdir(parents=True, exist_ok=True)
     # the fan's vendor app also polls its status, so the demo shows decoded replies too
     # and the markers note what its screen showed ('seen rpm 1186 temp 39 mode auto'), which names the readings
-    # it also opens a session first (hello, auth with the token from the hello reply, start)
+    # it also opens a session first (hello, auth with the token from the hello reply, start) and twice more
+    # later, once with a calibrate step because the fan answered auth with "needs calibration"
     cap, _ = make_capture(outdir / f"{device}.pcap", device=device, poll=0.5 if device == "fan" else 0.0,
-                          observe=device == "fan", handshake=device == "fan")
+                          observe=device == "fan", handshake=device == "fan", branch=device == "fan")
     proto = analyze(cap)
     (outdir / "report.md").write_text(render(proto, str(cap), sha256(cap)))
     (outdir / f"{device}_driver.py").write_text(generate(proto))
@@ -187,6 +188,12 @@ def _demo(outdir: Path, device: str = "lamp") -> int:
             if st.get("reopens"):
                 reuse += f", sent again {len(st['reopens'])}x later (session reopened)"
             print(f"  {st['step']}. {st['request'] or '(control read)'} -> {st['expect'] or 'no reply'}{reuse}")
+            br = st.get("branches")
+            for v, c in (br["cases"].items() if br else ()):
+                then = "the steps below" if c["main"] else ", ".join(
+                    f"{x['request']} -> {x['expect'] or 'no reply'}" for x in c["steps"])
+                print(f"     reply byte {br['offset']} = {v} ({c['count']}x"
+                      f"{', most common' if v == br['default'] else ''}): {then}")
     if proto.responses:
         print("\ndevice replies:")
         for r in proto.responses:

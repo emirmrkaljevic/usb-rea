@@ -8,7 +8,8 @@ Devices (VID 0x1234 / PID 0xABCD):
          00 byte reports the current mode (00 auto until a 'mode N' command, then that mode's byte)
          and the markers note what the vendor app showed now and then ('seen rpm 1186 temp 39 mode auto')
          With handshake=True the vendor app first opens a session (see fan_handshake): hello, auth
-         with the 4-byte session token from the hello reply, start
+         with the 4-byte session token from the hello reply, start (after a calibrate step when auth
+         answers "needs calibration", see branch=True)
   dial: A5 <cmd> <args> <sum8>; 32-bit LE position + 4-bit level bitfield
 """
 from __future__ import annotations
@@ -135,10 +136,11 @@ def fan_status(rpm: int, temp: int, mode: int = 0x00) -> bytes:
     return body + bytes([sum(body) & 0xFF])
 
 
-def fan_handshake(token: bytes) -> list[tuple[bytes, bytes]]:
+def fan_handshake(token: bytes, status: int = 0x01) -> list[tuple[bytes, bytes]]:
     """Fan session setup as (request, reply) pairs, requests framed like commands (5A 00 <cmd> ... CRC16):
-    hello 01 -> A5 01 <4-byte session token> <sum8>; auth 02 <token> -> A5 02 01 <sum8>;
-    start 03 01 -> A5 03 01 <sum8>."""
+    hello 01 -> A5 01 <4-byte session token> <sum8>; auth 02 <token> -> A5 02 <status> <sum8>;
+    start 03 01 -> A5 03 01 <sum8>. Status 01 is ready; with status 02 (needs calibration) the app
+    sends calibrate 04 01 -> A5 04 01 <sum8> before start."""
     from .checksums import compute
 
     def req(body):
@@ -149,8 +151,10 @@ def fan_handshake(token: bytes) -> list[tuple[bytes, bytes]]:
     def rep(body):
         body = bytes([0xA5]) + body
         return body + bytes([sum(body) & 0xFF])
-    return [(req(b"\x01"), rep(b"\x01" + token)), (req(b"\x02" + token), rep(b"\x02\x01")),
-            (req(b"\x03\x01"), rep(b"\x03\x01"))]
+    steps = [(req(b"\x01"), rep(b"\x01" + token)), (req(b"\x02" + token), rep(bytes([0x02, status])))]
+    if status == 0x02:
+        steps.append((req(b"\x04\x01"), rep(b"\x04\x01")))
+    return steps + [(req(b"\x03\x01"), rep(b"\x03\x01"))]
 
 
 DIAL_ACTIONS = [
@@ -177,7 +181,7 @@ def encode_dial(name: str, values: list[float]) -> bytes:
 def make_capture(path, actions: list[str] | None = None, transport: str = "bulk",
                  noise: bool = True, seed: int = 0, device: str = "lamp",
                  poll: float = 0.0, poll_seq: bool = False, observe: bool = False,
-                 handshake: bool = False, reopen: bool = False) -> tuple[Path, Path]:
+                 handshake: bool = False, reopen: bool = False, branch: bool = False) -> tuple[Path, Path]:
     """Write <path> (pcap) and <path>.actions.json. Returns both paths.
 
     poll: if > 0, the "vendor app" also sends a status request every `poll` seconds on the
@@ -193,6 +197,10 @@ def make_capture(path, actions: list[str] | None = None, transport: str = "bulk"
 
     reopen: (fan with handshake) halfway through, the app opens the session again (as after the
     device slept) with a new session token, between two actions.
+
+    branch: (fan with handshake) the app opens the session again twice more, a third and two thirds of
+    the way through: the first time the fan answers auth with status 02 (needs calibration) and the
+    app sends a calibrate step before start, the second time it answers 01 (ready) as at first.
 
     device: 'lamp' (see module doc), 'fan' (counter + 16-bit BE + RGB + lookup + CRC16),
     or 'dial' (32-bit LE position + 4-bit brightness bitfield + sum8).
@@ -210,11 +218,11 @@ def make_capture(path, actions: list[str] | None = None, transport: str = "bulk"
     w.control_in(t, bytes([0x80, 6, 0, 1, 0, 0, 18, 0]), device_descriptor())
     if transport == "control":
         w.control_in(t + 0.01, bytes([0x81, 6, 0, 0x22, 0, 0, len(LAMP_HID_DESCRIPTOR), 0]), LAMP_HID_DESCRIPTOR)
-    if (handshake or reopen) and device != "fan":
+    if (handshake or reopen or branch) and device != "fan":
         raise ValueError("only the synthetic fan does a handshake")
 
-    def open_session(at0, token):
-        for i, (req, rep) in enumerate(fan_handshake(token)):
+    def open_session(at0, token, status=0x01):
+        for i, (req, rep) in enumerate(fan_handshake(token, status)):
             at = at0 + 0.01 * i
             if transport == "control":
                 w.control_out(at, bytes([0x21, 0x09, 0x00, 0x02, 0, 0, len(req), 0]), req)
@@ -231,6 +239,9 @@ def make_capture(path, actions: list[str] | None = None, transport: str = "bulk"
     for n_act, label in enumerate(actions):
         if reopen and handshake and n_act == len(actions) // 2:
             open_session(t - 0.4, random.Random(seed + 8).randbytes(4))
+        if branch and handshake and n_act in (len(actions) // 3, 2 * len(actions) // 3):
+            first = n_act == len(actions) // 3
+            open_session(t - 0.3, random.Random(seed + (9 if first else 10)).randbytes(4), 0x02 if first else 0x01)
         start = t
         if noise:
             for _ in range(rnd.randint(1, 3)):

@@ -151,6 +151,8 @@ def test_cli_demo_fan_shows_handshake(tmp_path, capsys):
     assert main(["demo", "--device", "fan", "-o", str(tmp_path / "d")]) == 0
     out = capsys.readouterr().out
     assert "handshake (3 messages" in out and "bytes 3-6 = token from step 1" in out
+    assert "reply byte 2 = 01 (2x, most common): the steps below" in out
+    assert "reply byte 2 = 02 (1x): 5a 00 04 01" in out
     assert "HANDSHAKE = [{" in (tmp_path / "d" / "fan_driver.py").read_text()
 
 
@@ -236,3 +238,92 @@ def test_partial_repeat_is_not_a_reopen(tmp_path):
     (tmp_path / "x.pcap.actions.json").write_text(json.dumps(marks))
     hs = analyze(cap).handshake
     assert [s["request"] for s in hs] == ["11 00 00 00"] and hs[0]["reopens"] == []
+
+
+@pytest.mark.parametrize("kw", [{}, {"poll": 0.5, "observe": True}, {"poll": 0.25, "transport": "control"}])
+def test_branch_on_reply_byte(tmp_path, kw):
+    """auth answered 'needs calibration' (02) in one reopened session: the app sent calibrate before start."""
+    base = analyze(make_capture(tmp_path / "a.pcap", device="fan", handshake=True, **kw)[0])
+    p = analyze(make_capture(tmp_path / "b.pcap", device="fan", handshake=True, branch=True, **kw)[0])
+    hs = p.handshake
+    assert [s["request"][:8] for s in hs] == ["5a 00 01", "5a 00 02", "5a 00 03"]
+    assert [len(s["reopens"]) for s in hs] == [2, 2, 1]       # start was only sent again in the 01 session
+    assert hs[1]["expect"] == "a5 02 ?? ??" and "branches" not in hs[0] and "branches" not in hs[2]
+    br = hs[1]["branches"]
+    assert br["offset"] == 2 and br["default"] == "01" and list(br["cases"]) == ["01", "02"]
+    assert br["cases"]["01"]["main"] and br["cases"]["01"]["count"] == 2
+    two = br["cases"]["02"]
+    assert two["count"] == 1 and not two["main"]
+    assert [(x["step"], x["request"][:11], x["expect"]) for x in two["steps"]] == \
+        [(3, "5a 00 04 01", "a5 04 01 ??"), (4, "5a 00 03 01", "a5 03 01 ??")]
+    assert all(x["request_checksum"]["algo"] == "crc16_modbus" for x in two["steps"])
+    assert [(c.name, [f.describe() for f in c.fields]) for c in p.commands] == \
+        [(c.name, [f.describe() for f in c.fields]) for c in base.commands]   # branch messages are not actions
+    md = render(p)
+    assert "Step 2 branches on reply byte 2" in md and "falls back to the most common one (`01`)" in md
+    json.dumps(p.to_dict(), default=str)
+
+
+def test_driver_takes_the_branch(tmp_path):
+    p = analyze(make_capture(tmp_path / "fan.pcap", device="fan", handshake=True, branch=True)[0])
+    src = generate(p)
+    assert "# step 2 branches on reply byte 2 (values 0x01, 0x02)" in src and "most common branch, 0x01" in src
+    drv = _driver(tmp_path, p, "drv_branch")
+    token = bytes([0x01, 0x02, 0x03, 0x04])
+    for status in (0x01, 0x02):
+        pairs = fan_handshake(token, status)
+        fake, sent = _fake([r for _, r in pairs])
+        d = drv.Device(fake)
+        assert [s for _, s in sent] == [q for q, _ in pairs]      # calibrate only when the fan asked for it
+        assert d.branches == {2: status} and len(d.session) == len(pairs)
+    # a status the capture never showed: the most common branch (01, straight to start)
+    pairs = fan_handshake(token)
+    auth = bytearray(pairs[1][1])
+    auth[2], auth[3] = 0x07, (auth[3] + 6) & 0xFF                 # keep the sum8 valid
+    fake, sent = _fake([pairs[0][1], bytes(auth), pairs[2][1]])
+    d = drv.Device(fake)
+    assert [s for _, s in sent] == [q for q, _ in pairs] and d.branches == {2: 0x01}
+
+
+def _branch_capture(path, second: bytes):
+    """hello -> 90 00 <id 3>, start; between two actions hello again, answered `second`, then 12 00 00."""
+    w = UsbmonWriter()
+    w.control_in(T0, bytes([0x80, 6, 0, 1, 0, 0, 18, 0]), device_descriptor())
+    w.out(T0 + 0.1, 0x01, bytes([0x10, 0x01, 0x00, 0x00]))
+    w.in_(T0 + 0.103, 0x81, bytes([0x90, 0x00, 0x00, 0x00]))
+    w.out(T0 + 0.2, 0x01, bytes([0x11, 0x00, 0x00, 0x00]))
+    w.in_(T0 + 0.203, 0x81, bytes([0x91, 0x00]))
+    marks = []
+    for i, v in enumerate((10, 20, 30, 40)):
+        t = T0 + 1 + 1.5 * i
+        if i == 2:
+            w.out(t - 0.3, 0x01, bytes([0x10, 0x01, 0x00, 0x00]))
+            w.in_(t - 0.297, 0x81, second)
+            w.out(t - 0.2, 0x01, bytes([0x12, 0x00, 0x00, 0x00]))
+            w.in_(t - 0.197, 0x81, bytes([0x92, 0x00]))
+        w.out(t + 0.3, 0x01, bytes([0x30, v, 0x00, 0x00]))
+        marks.append({"label": f"level {v}", "start": t, "end": t + 0.9})
+    w.save(path)
+    path.with_suffix(".pcap.actions.json").write_text(json.dumps(marks))
+    return path
+
+
+def test_other_messages_after_same_reply_are_not_a_branch(tmp_path):
+    """The reply to hello did not change, so the different next message is not the device's doing."""
+    p = analyze(_branch_capture(tmp_path / "same.pcap", bytes([0x90, 0x00, 0x00, 0x00])))
+    assert [s["request"] for s in p.handshake] == ["11 00 00 00"]
+    assert not any(s.get("branches") for s in p.handshake)
+
+
+def test_branch_on_a_mode_byte(tmp_path):
+    p = analyze(_branch_capture(tmp_path / "mode.pcap", bytes([0x90, 0x01, 0x00, 0x00])))
+    hs = p.handshake
+    assert [s["request"] for s in hs] == ["10 01 00 00", "11 00 00 00"] and hs[0]["expect"] == "90 ?? 00 00"
+    cases = hs[0]["branches"]["cases"]
+    assert hs[0]["branches"]["offset"] == 1 and list(cases) == ["00", "01"]
+    assert [x["request"] for x in cases["01"]["steps"]] == ["12 00 00 00"]
+    assert [c.name for c in p.commands] == ["level"] and len(p.commands[0].samples) == 4
+    out = _driver(tmp_path, p, "drv_mode")
+    fake, sent = _fake([bytes([0x90, 0x01, 0x00, 0x00]), bytes([0x92, 0x00])])
+    assert out.Device(fake).branches == {1: 0x01}
+    assert [s for _, s in sent] == [bytes([0x10, 1, 0, 0]), bytes([0x12, 0, 0, 0])]

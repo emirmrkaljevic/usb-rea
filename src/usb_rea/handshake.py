@@ -25,6 +25,14 @@ was replugged, or the app reconnected), that later block is the same session set
 Each later message must match its step on the same channel and length, differing only in the
 request checksum or in bytes copied from the block's own replies (a new session token). The block
 is set aside before actions are inferred and listed under `reopens` on each step.
+
+Branches: a later block may follow the handshake up to some step and then send other messages,
+when the reply to that step differs at a byte that is not a session token or checksum (a status or
+mode the device reports, such as "ready" or "needs calibration"). That step branches on the reply
+byte: its `branches` map each value seen there to the steps the app sent next (the rest of the
+handshake for the first session's value, the other messages for the others, up to the next action
+marker). The driver reads the live reply byte and takes the matching branch, falling back to the
+most common one for a value the capture never showed. One branch point per handshake, on one byte.
 """
 from __future__ import annotations
 from bisect import bisect_right
@@ -133,31 +141,66 @@ def _same_step(m: Transfer, c: Transfer, replies: list[bytes], ck: dict | None) 
     return diff <= ok
 
 
-def find_reopens(transfers: list[Transfer], background: list[dict], marks: list[dict]) -> list[list[list[Transfer]]]:
-    """Later blocks that send the whole pre-action sequence again: one list of copies per step."""
+class Block(list):
+    """Copies of each step of a later handshake block. `fork` is set when the block took another branch:
+    {"step": index of the step whose reply decided it, "offset": reply byte, "value": its value}; the
+    copies after that step are the messages the app sent instead of the rest of the handshake."""
+    fork: dict | None = None
+
+
+def _copies(after: list[Transfer], q: int) -> tuple[list[Transfer], int]:
+    """after[q] and the identical copies sent straight after it (retries); returns them and the last index."""
+    copies = [after[q]]
+    while q + 1 < len(after) and (after[q + 1].key(), after[q + 1].data) == (after[q].key(), after[q].data) \
+            and after[q + 1].ts - after[q].ts <= WINDOW:
+        q += 1
+        copies.append(after[q])
+    return copies, q
+
+
+def _reused(reply: bytes, reqs: list[bytes]) -> set[int]:
+    """Reply bytes copied into later requests (session tokens)."""
+    return {k for m in reqs for a, _, n in _runs(reply, m, set(), set()) for k in range(a, a + n)}
+
+
+def _decides(pre_reply: bytes, reply: bytes, ck: dict | None, pre_later: list[bytes], later: list[bytes]) -> int | None:
+    """First byte where a block's reply differs from the first session's, not counting checksum and token bytes."""
+    if not pre_reply or len(pre_reply) != len(reply):
+        return None
+    skip = _ck_span(ck, len(reply)) | _reused(pre_reply, pre_later) | _reused(reply, later)
+    diff = [k for k, (a, b) in enumerate(zip(pre_reply, reply)) if a != b and k not in skip]
+    return diff[0] if diff else None
+
+
+def find_reopens(transfers: list[Transfer], background: list[dict], marks: list[dict]) -> list[Block]:
+    """Later blocks that send the pre-action sequence again: one list of copies per step. A block that
+    follows it up to a step whose reply differs, then sends other messages, is a branch (Block.fork)."""
     st = _setup(transfers, background, marks)
     if not st:
         return []
     first, polls, ordered, frames = st
+    acts = [(m["start"], m.get("end", m["start"])) for m in marks if not is_observation(m["label"])]
+    starts = sorted(a for a, _ in acts)
     pre = _group([t for t in ordered if t.ts < first and _query(t) and id(t) not in polls], ordered, frames, polls)
     if len(pre) < 2:
         return []
     ck = _checksum([g[-1].data for g in pre if not is_control_read(g[-1])])
+    pre_reps = []
+    for g in pre:
+        r = _reply(g[-1], ordered, frames)
+        pre_reps.append(r.data if r else b"")
+    rck = _checksum(pre_reps)
     after = [t for t in ordered if t.ts >= first and _query(t) and id(t) not in polls]
     blocks, p = [], 0
     while p < len(after):
         if (after[p].key(), after[p].data) != (pre[0][-1].key(), pre[0][-1].data):
             p += 1
             continue
-        block, replies, q = [], [], p
+        block, replies, q = Block(), [], p
         for c in (g[-1] for g in pre):
             if q >= len(after) or not _same_step(after[q], c, replies, ck):
                 break
-            copies = [after[q]]
-            while q + 1 < len(after) and (after[q + 1].key(), after[q + 1].data) == (after[q].key(), after[q].data) \
-                    and after[q + 1].ts - after[q].ts <= WINDOW:
-                q += 1
-                copies.append(after[q])
+            copies, q = _copies(after, q)
             r = _reply(copies[-1], ordered, frames)
             replies.append(r.data if r else b"")
             block.append(copies)
@@ -165,8 +208,25 @@ def find_reopens(transfers: list[Transfer], background: list[dict], marks: list[
         if len(block) == len(pre):
             blocks.append(block)
             p = q
-        else:
+            continue
+        # a branch: the app went on with other messages, up to the next action marker
+        # (only between actions: inside one, the messages belong to that action)
+        end = next((s for s in starts if s > after[p].ts), float("inf"))
+        inside = any(a <= after[p].ts <= z for a, z in acts)
+        tail = []
+        while block and not inside and q < len(after) and after[q].ts < end and len(block) + len(tail) < MAX_STEPS:
+            copies, q = _copies(after, q)
+            tail.append(copies)
+            q += 1
+        k = len(block) - 1
+        off = _decides(pre_reps[k], replies[k], rck, [g[-1].data for g in pre[k + 1:]],
+                       [c[-1].data for c in tail]) if block and tail else None
+        if off is None:
             p += 1
+            continue
+        blocks.append(Block(block + tail))
+        blocks[-1].fork = {"step": k, "offset": off, "value": replies[k][off]}
+        p = q
     return blocks
 
 
@@ -218,7 +278,7 @@ def find_handshake(transfers: list[Transfer], background: list[dict], marks: lis
             "request_checksum": None, "reply_checksum": None, "uses": [], "tokens": [], "echoes": [],
             "expect": None, "retries": tries,
             "reopens": [{"frame": b[where[id(q)]][-1].frame, "time": round(b[where[id(q)]][-1].ts - t0, 3)}
-                        for b in reopens if id(q) in where],
+                        for b in reopens if id(q) in where and (not b.fork or where[id(q)] <= b.fork["step"])],
         })
     if not steps:
         return []
@@ -273,4 +333,82 @@ def find_handshake(transfers: list[Transfer], background: list[dict], marks: lis
         if reps[i]:
             vary = taken[i] | skip_r(i)
             s["expect"] = " ".join("??" if k in vary else f"{b:02x}" for k, b in enumerate(reps[i]))
+    _branches(steps, groups, reopens, where, ordered, frames, t0, qck, rck)
     return steps
+
+
+def _fits(ck: dict | None, m: bytes) -> bool:
+    return bool(ck and m and len(m) >= ck["start"] + ck["width"] + 2 and int.from_bytes(
+        m[-ck["width"]:], "little" if ck["endian"] == "le" else "big") == compute(ck["algo"], m[ck["start"]:len(m) - ck["width"]]))
+
+
+def _branches(steps, groups, reopens, where, ordered, frames, t0, qck, rck) -> None:
+    """Record on the deciding step which messages the app sent next for each value of its reply byte."""
+    forks = [b for b in reopens if b.fork]
+    if not forks:
+        return
+    pos = {where[id(g[-1])]: k for k, g in enumerate(groups) if id(g[-1]) in where}   # pre index -> step index
+    fork = forks[0].fork
+    k = pos.get(fork["step"])
+    if k is None or not steps[k]["reply"]:
+        return
+    s, off = steps[k], fork["offset"]
+    main = bytes.fromhex(s["reply"])
+    if len(main) <= off:
+        return
+    cases = {f"{main[off]:02x}": {"count": 1, "main": True, "frames": [s["reply_frame"]], "steps": []}}
+    for b in reopens:
+        if b.fork and (b.fork["step"], b.fork["offset"]) != (fork["step"], off):
+            continue
+        dq = b[fork["step"]][-1]
+        r = _reply(dq, ordered, frames)
+        if r is None or len(r.data) <= off:
+            continue
+        case = cases.setdefault(f"{r.data[off]:02x}", {"count": 0, "main": not b.fork, "frames": [], "steps": []})
+        case["count"] += 1
+        case["frames"].append(r.frame)
+        if b.fork and not case["steps"] and not case["main"]:
+            # this session's replies so far, indexed like the driver's session list (step n -> n - 1)
+            session = []
+            for i in range(k + 1):
+                c = b[where[id(groups[i][-1])]][-1] if id(groups[i][-1]) in where else None
+                cr = _reply(c, ordered, frames) if c is not None else None
+                session.append(cr.data if cr else b"")
+            case["steps"] = _tail(b[fork["step"] + 1:], session, k + 1, ordered, frames, t0, qck, rck)
+    s["expect"] = " ".join("??" if i == off else x for i, x in enumerate(s["expect"].split()))
+    s["branches"] = {"offset": off, "default": max(cases, key=lambda v: cases[v]["count"]), "cases": cases}
+
+
+def _tail(groups, session, done, ordered, frames, t0, qck, rck) -> list[dict]:
+    """Steps (numbered after the `done` steps before them) the app sent in one branch, with their replies."""
+    out = []
+    for j, g in enumerate(groups):
+        q = g[-1]
+        r = _reply(q, ordered, frames)
+        req, rep = q.data or b"", r.data if r else b""
+        qc, rc = qck if not is_control_read(q) and _fits(qck, req) else None, rck if _fits(rck, rep) else None
+        skip = _ck_span(qc, len(req))
+        uses = []
+        for i, prev in enumerate(session):
+            for a, b, n in _runs(prev, req, set(), skip):
+                if not any(b < u["offset"] + u["width"] and u["offset"] < b + n for u in uses):
+                    uses.append({"step": i + 1, "reply_offset": a, "offset": b, "width": n})
+        out.append({
+            "step": done + j + 1, "frame": q.frame, "time": round(q.ts - t0, 3),
+            "endpoint": q.endpoint, "xfer_type": q.xfer_type, "setup": q.setup.hex() if q.setup else None,
+            "read": is_control_read(q), "request": req.hex(" "),
+            "reply": rep.hex(" ") if r else None, "reply_frame": r.frame if r else None,
+            "reply_endpoint": r.endpoint if r else None, "reply_xfer_type": r.xfer_type if r else None,
+            "request_checksum": {**qc, "covers": [qc["start"], len(req) - qc["width"]]} if qc else None,
+            "reply_checksum": {**rc, "covers": [rc["start"], len(rep) - rc["width"]]} if rc else None,
+            "uses": uses, "retries": [{"frame": c.frame} for c in g[:-1]], "expect": None,
+        })
+        session.append(rep)
+    for i, st in enumerate(out):
+        if st["reply"]:
+            rep = bytes.fromhex(st["reply"])
+            n = done + i   # this reply's index in the session
+            vary = _ck_span(st["reply_checksum"], len(rep)) | {
+                u["reply_offset"] + x for o in out for u in o["uses"] if u["step"] == n + 1 for x in range(u["width"])}
+            st["expect"] = " ".join("??" if k in vary else f"{b:02x}" for k, b in enumerate(rep))
+    return out

@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+- handshake branches: when a later handshake block follows the first one up to a step whose reply
+  differs at a byte that is not a token or checksum (a status or mode the device reports) and then
+  sends other messages, that step gets `branches` (reply byte offset, each value seen with its count
+  and the steps the app sent next, the most common value as `default`). The branch messages are kept
+  out of the actions, the report and the CLI demo list the branches, and the driver's `open()` reads
+  the byte from the live reply and replays the matching branch, falling back to the most common one
+  for a value never captured (`Device.branches` records what was taken). Synthetic fan:
+  `make_capture(..., handshake=True, branch=True)` (auth answers "needs calibration" once, and the app
+  sends a calibrate step before start); `usb-rea demo --device fan` shows it.
+
 ## v0.7.1 (2026-10-26)
 Handshake retries and reopens.
 - handshake retries: identical messages the app sends again straight away (after no reply or a

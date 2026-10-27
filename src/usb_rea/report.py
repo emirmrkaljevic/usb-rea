@@ -89,6 +89,8 @@ def _handshake(proto: Protocol) -> list[str]:
             L.append(f"- The app sent the whole handshake again later, starting at {at}: it reopened the "
                      "session (the device woke up or reconnected). Those messages are left out of the actions; "
                      "call `open()` again when the device stops answering after sleep or a replug.")
+        if s.get("branches"):
+            L += _branch_lines(s)
         for u in s["uses"]:
             L.append(f"- Step {s['step']} request bytes {u['offset']}-{u['offset'] + u['width'] - 1} repeat "
                      f"bytes {u['reply_offset']}-{u['reply_offset'] + u['width'] - 1} of the reply to step "
@@ -111,6 +113,25 @@ def _handshake(proto: Protocol) -> list[str]:
                      + (" (from byte 1)" if any(k == kind and x == a and c[0] for k, x, c in cks) else "")
                      + ("; the driver recomputes it." if kind == "request" else "; the driver checks it."))
     return L + [""]
+
+
+def _branch_lines(s: dict) -> list[str]:
+    br = s["branches"]
+    off, default = br["offset"], br["default"]
+    L = [f"- Step {s['step']} branches on reply byte {off}: what the app sent next depended on it."]
+    for v, c in br["cases"].items():
+        seen = f"seen {c['count']}x (reply frame{'s' if len(c['frames']) > 1 else ''} " \
+               + ", ".join(map(str, c["frames"])) + ")"
+        if c["main"]:
+            then = "the steps after it in the table"
+        else:
+            then = ", then ".join(f"`{x['request']}` (frame {x['frame']}, reply `{x['expect'] or 'none'}`)"
+                                  for x in c["steps"])
+        L.append(f"  - `{v}`, {seen}: {then}")
+    L.append(f"  The driver reads byte {off} of the live reply and takes the matching branch; a value the "
+             f"capture never showed falls back to the most common one (`{default}`). The byte is `??` in "
+             "*Expected*, since it is the answer the app checks, not a fixed byte.")
+    return L
 
 
 def _observations(proto: Protocol) -> list[str]:

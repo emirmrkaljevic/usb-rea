@@ -90,7 +90,8 @@ def build():
         observations in `observed`; a named mode has `table` (raw value -> word the app showed);
         `observations` lists every 'seen' value and which reply bytes it matched. `handshake` lists the
         messages sent once before the first action (request, reply, `expect` with `??` for token and
-        checksum bytes, `uses`/`tokens` for reply bytes reused later as a session token, checksums).
+        checksum bytes, `uses`/`tokens` for reply bytes reused later as a session token, checksums,
+        `retries`, `reopens`, and `branches` on a step whose reply byte decided what the app sent next).
 
         Read-only analysis: does not write files or talk to hardware. Requires either markers from
         mark_action or `labels` for a finished capture with pauses between clicks. Prefer report

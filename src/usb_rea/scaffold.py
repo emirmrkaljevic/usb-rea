@@ -78,6 +78,7 @@ class Device:
         self.seq = 0
         self.sent = []
         self.session = []
+        self.branches = {{}}
         for cfg in self.dev:
             for intf in cfg:
                 if self.dev.is_kernel_driver_active(intf.bInterfaceNumber):
@@ -93,9 +94,16 @@ class Device:
 
         Bytes taken from an earlier reply (session token) are copied from this session's replies.
         With check=True a reply whose fixed bytes or checksum differ from the capture raises RuntimeError.
+        A step with "branch" picks the next steps by a byte of its live reply (self.branches records
+        which value was taken at which step).
         """
         self.session = []
-        for i, step in enumerate(HANDSHAKE, 1):
+        self.branches = {{}}
+        steps = list(HANDSHAKE)
+        i = 0
+        while i < len(steps):
+            step = steps[i]
+            i += 1
             tries = step.get("tries", 1)   # the vendor app resent this step when it got no or another reply
             for attempt in range(1, tries + 1):
                 try:
@@ -107,6 +115,15 @@ class Device:
                     if attempt == tries:
                         raise
             self.session.append(reply)
+            br = step.get("branch")
+            if br and reply is not None and len(reply) > br["offset"]:
+                value = reply[br["offset"]]
+                if value not in br["cases"]:
+                    # a value the capture never showed: fall back to the most common branch
+                    value = br["default"]
+                self.branches[i] = value
+                if br["cases"][value] is not None:   # None: go on with the steps that follow in HANDSHAKE
+                    steps = steps[:i] + br["cases"][value]
         return self.session
 
     def _step(self, step, timeout):
@@ -265,14 +282,9 @@ def generate(proto: Protocol) -> str:
 
     # handshake: replayed by Device.open(); session tokens are copied from this session's replies
     links: dict[tuple[str, int], list[dict]] = {}
-    hs = []
-    for st in proto.handshake:
-        for t in st["tokens"]:
-            for u in t["used_by"]:
-                if "command" in u:
-                    links.setdefault((u["command"], u["packet"]), []).append(
-                        dict(kind="session", offset=u["offset"], width=t["width"], endian="le",
-                             step=st["step"] - 1, at=t["reply_offset"]))
+    hs, notes = [], []
+
+    def hs_step(st):
         setup = None
         if st["setup"]:
             q = bytes.fromhex(st["setup"])
@@ -294,8 +306,26 @@ def generate(proto: Protocol) -> str:
                     read=st["read"], fields=fields, reply=reply)
         if st.get("retries"):
             step["tries"] = len(st["retries"]) + 1
-        hs.append(step)
+        br = st.get("branches")
+        if br:
+            # the next steps depend on one byte of this step's reply, as the app did
+            step["branch"] = dict(offset=br["offset"], default=int(br["default"], 16), cases={
+                int(v, 16): None if c["main"] else [hs_step(x) for x in c["steps"]] for v, c in br["cases"].items()})
+            notes.append(f"# step {st['step']} branches on reply byte {br['offset']} (values "
+                         + ", ".join(f"0x{v}" for v in br["cases"]) + "); a value never captured falls back "
+                         f"to the most common branch, 0x{br['default']}\n")
+        return step
+
+    for st in proto.handshake:
+        for t in st["tokens"]:
+            for u in t["used_by"]:
+                if "command" in u:
+                    links.setdefault((u["command"], u["packet"]), []).append(
+                        dict(kind="session", offset=u["offset"], width=t["width"], endian="le",
+                             step=st["step"] - 1, at=t["reply_offset"]))
+        hs.append(hs_step(st))
     specs.append("# handshake, evidence frames " + ", ".join(str(st["frame"]) for st in proto.handshake) + "\n" if hs else "")
+    specs += notes
     specs.append(f"HANDSHAKE = {hs!r}\n")
 
     queries = []
