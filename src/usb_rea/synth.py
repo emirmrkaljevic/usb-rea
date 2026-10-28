@@ -101,6 +101,11 @@ FAN_MODE_NAMES = {0x00: "auto", 0x11: "silent", 0x22: "balanced", 0x47: "turbo"}
 FAN_ACTIONS = ["fan 800", "fan 1200", "fan 2650", "fan 4000", "color 255 0 0", "color 0 128 255",
                "color 10 20 30", "mode 1", "mode 2", "mode 3"]
 
+# states=True: the fan only takes a color in mode 3 (its custom lighting mode), so the vendor app only
+# ever sends color after mode 3; fan speed works in every mode
+FAN_STATE_ACTIONS = ["mode 1", "fan 800", "fan 1200", "mode 3", "color 255 0 0", "color 0 128 255",
+                     "mode 2", "fan 2650", "fan 4000", "mode 3", "color 10 20 30"]
+
 
 def encode_fan(name: str, values: list[float], seq: int) -> bytes:
     """Fake fan controller: 5A <seq> <cmd> <args...> pad to 6, then CRC16/MODBUS little-endian."""
@@ -181,7 +186,8 @@ def encode_dial(name: str, values: list[float]) -> bytes:
 def make_capture(path, actions: list[str] | None = None, transport: str = "bulk",
                  noise: bool = True, seed: int = 0, device: str = "lamp",
                  poll: float = 0.0, poll_seq: bool = False, observe: bool = False,
-                 handshake: bool = False, reopen: bool = False, branch: bool = False) -> tuple[Path, Path]:
+                 handshake: bool = False, reopen: bool = False, branch: bool = False,
+                 states: bool = False) -> tuple[Path, Path]:
     """Write <path> (pcap) and <path>.actions.json. Returns both paths.
 
     poll: if > 0, the "vendor app" also sends a status request every `poll` seconds on the
@@ -202,13 +208,18 @@ def make_capture(path, actions: list[str] | None = None, transport: str = "bulk"
     the way through: the first time the fan answers auth with status 02 (needs calibration) and the
     app sends a calibrate step before start, the second time it answers 01 (ready) as at first.
 
+    states: (fan) use FAN_STATE_ACTIONS, where color is only ever sent after 'mode 3' while fan
+    speed is set in modes 1 and 2, so color gets a state precondition.
+
     device: 'lamp' (see module doc), 'fan' (counter + 16-bit BE + RGB + lookup + CRC16),
     or 'dial' (32-bit LE position + 4-bit brightness bitfield + sum8).
     """
     from .model import split_label, split_values
     rnd = random.Random(seed)
+    if states and device != "fan":
+        raise ValueError("only the synthetic fan has state-dependent commands")
     if device == "fan":
-        actions = actions or FAN_ACTIONS
+        actions = actions or (FAN_STATE_ACTIONS if states else FAN_ACTIONS)
     elif device == "dial":
         actions = actions or DIAL_ACTIONS
     actions = actions or ["brightness 0%", "brightness 25%", "brightness 50%", "brightness 75%",

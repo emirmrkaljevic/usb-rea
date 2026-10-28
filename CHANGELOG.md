@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+- state preconditions: a command the app only sent while a state command (one argument that is a
+  lookup table, like `mode 1/2/3`, or on/off) had one value, at least twice and while other commands
+  were used in other values, gets `requires` (state, value, count, other values, evidence frames).
+  The report, the CLI demo and the MCP output (`states`) list it; the generated driver tracks what it
+  set and calls the state command first (`Device(auto_state=False)` raises `StateError` instead).
+  Synthetic fan: `make_capture(..., device="fan", states=True)` (color only in mode 3), used by
+  `usb-rea demo --device fan`.
+
 ## v0.7.2 (2026-10-27)
 Handshakes that branch on the device's reply.
 - handshake branches: when a later handshake block follows the first one up to a step whose reply

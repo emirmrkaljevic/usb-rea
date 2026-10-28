@@ -48,6 +48,9 @@ def analyze(capture: str | Path, markers: str | Path | None = None, device: int 
         ts = [t for t in ts if id(t) not in drop]
     acts = assign(ts, marks)
     proto = infer(acts, vid, pid)
+    from .states import find_states
+    # commands the app only sent after a mode command chose one value (a state precondition)
+    proto.states = find_states(acts, proto.commands)
     proto.hid = hid_summary(ts, proto)
     proto.background = [{"endpoint": b["key"][1], "xfer_type": b["key"][2],
                          "setup": b["key"][3] or None, "payload": pattern(b["data"], b["mask"]),

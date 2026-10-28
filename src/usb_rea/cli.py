@@ -165,9 +165,11 @@ def _demo(outdir: Path, device: str = "lamp") -> int:
     # the fan's vendor app also polls its status, so the demo shows decoded replies too
     # and the markers note what its screen showed ('seen rpm 1186 temp 39 mode auto'), which names the readings
     # it also opens a session first (hello, auth with the token from the hello reply, start) and twice more
-    # later, once with a calibrate step because the fan answered auth with "needs calibration"
+    # later, once with a calibrate step because the fan answered auth with "needs calibration";
+    # its app only sets a color in mode 3, which the driver then does first
     cap, _ = make_capture(outdir / f"{device}.pcap", device=device, poll=0.5 if device == "fan" else 0.0,
-                          observe=device == "fan", handshake=device == "fan", branch=device == "fan")
+                          observe=device == "fan", handshake=device == "fan", branch=device == "fan",
+                          states=device == "fan")
     proto = analyze(cap)
     (outdir / "report.md").write_text(render(proto, str(cap), sha256(cap)))
     (outdir / f"{device}_driver.py").write_text(generate(proto))
@@ -178,6 +180,9 @@ def _demo(outdir: Path, device: str = "lamp") -> int:
           f"device {proto.vid:04x}:{proto.pid:04x}\n")
     for c in proto.commands:
         print(f"{c.name:12s} {c.confidence:4.0%}  " + " | ".join(f.describe() for f in c.fields))
+    for r in proto.states:
+        print(f"  {r['command']} only sent while {r['state']} {r['value']:g} ({r['count']}x; other commands "
+              f"ran in {r['state']} {', '.join(f'{v:g}' for v in r['other_values'])}): the driver sets it first")
     if proto.handshake:
         print(f"\nhandshake ({len(proto.handshake)} messages sent once when the app opens the device):")
         for st in proto.handshake:

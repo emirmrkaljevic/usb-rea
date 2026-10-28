@@ -23,9 +23,10 @@ pip install usb-rea
 usb-rea demo --device fan
 ```
 ```
-fan    100%  0x5a | counter (+1 per message) | 0x10 | u16be round(value * 1 + 0) | 0x00 | u16le crc16_modbus(bytes[0:6])
-color  100%  0x5a | counter (+1 per message) | 0x20 | round(value * 1 + 0) | round(value[1] * 1 + 0) | round(value[2] * 1 + 0) | u16le crc16_modbus(bytes[0:6])
-mode   100%  0x5a | counter (+1 per message) | 0x30 | lookup 1→0x11, 2→0x22, 3→0x47 | 0x00 | 0x00 | u16le crc16_modbus(bytes[0:6])
+mode         100%  0x5a | counter (+1 per message) | 0x30 | lookup 1→0x11, 2→0x22, 3→0x47 | 0x00 | 0x00 | u16le crc16_modbus(bytes[0:6])
+fan          100%  0x5a | counter (+1 per message) | 0x10 | u16be round(value * 1 + 0) | 0x00 | u16le crc16_modbus(bytes[0:6])
+color        100%  0x5a | counter (+1 per message) | 0x20 | round(value * 1 + 0) | round(value[1] * 1 + 0) | round(value[2] * 1 + 0) | u16le crc16_modbus(bytes[0:6])
+  color only sent while mode 3 (3x; other commands ran in mode 1, 2): the driver sets it first
 
 handshake (3 messages sent once when the app opens the device):
   1. 5a 00 01 00 00 00 0d 1d -> a5 01 ?? ?? ?? ?? ??, sent again 2x later (session reopened)
@@ -35,12 +36,14 @@ handshake (3 messages sent once when the app opens the device):
   3. 5a 00 03 01 00 00 5d 65 -> a5 03 01 ??, sent again 1x later (session reopened)
 
 device replies:
-fan    6/6  0xa5 | = query byte 2 (0x10) | = query byte 1 | u16le round(value * 1 + 0) | sum8(bytes[0:5])
-poll 1 7/7  0xa5 | = query byte 2 (0x40) | u16le rpm = raw, seen 794..4012 | u8 temp = raw, seen 35..38 | mode: 0x00 = auto, 0x11 = silent, 0x22 = balanced, 0x47 = turbo | sum8(bytes[0:6])
+mode         6/6  0xa5 | = query byte 2 (0x30) | = query byte 1 | = query byte 3 | 0x00 | sum8(bytes[0:5])
+fan          6/6  0xa5 | = query byte 2 (0x10) | = query byte 1 | u16le round(value * 1 + 0) | sum8(bytes[0:5])
+color        6/6  0xa5 | = query byte 2 (0x20) | = query byte 1 | 0x00 | 0x00 | sum8(bytes[0:5])
+poll 1       7/7  0xa5 | = query byte 2 (0x40) | u16le rpm = raw, seen 800..4011 | u8 temp = raw, seen 35..38 | mode: 0x11 = silent, 0x22 = balanced, 0x47 = turbo | sum8(bytes[0:6])
 
-21 of 21 'seen' observations matched a reply byte (mode, rpm, temp)
+24 of 24 'seen' observations matched a reply byte (mode, rpm, temp)
 ```
-It writes a synthetic capture of a fan controller (its vendor app first opens a session with a token the fan hands out, then polls the fan's status, and the markers note what the app's screen showed, `seen rpm 1207 temp 37 mode auto`), recovers the protocol and the replies, names the readings and the fan's mode, and writes `report.md` (every claim linked to Wireshark frame numbers) and a working pyusb driver that encodes values it never saw and decodes what the fan answers.
+It writes a synthetic capture of a fan controller (its vendor app first opens a session with a token the fan hands out, then polls the fan's status, and the markers note what the app's screen showed, `seen rpm 1207 temp 37 mode silent`), recovers the protocol and the replies, names the readings and the fan's mode, notices that the app only sets a color in mode 3, and writes `report.md` (every claim linked to Wireshark frame numbers) and a working pyusb driver that encodes values it never saw and decodes what the fan answers.
 
 `--device lamp` (default) is a simple 8-bit device; `--device dial` shows 32-bit values and packed bitfields:
 ```
@@ -199,6 +202,27 @@ a reopen (a partial one, e.g. after a mode switch, is not recognised), and a tok
 transformed, such as a challenge answered with a hash, is not recognised). With `--labels` (no
 timestamps) the handshake is part of the first action, so use markers for this.
 
+### States: commands the app only sends in one mode
+
+Some devices only accept a command in one mode (a color only in "custom" lighting mode, a curve only
+in manual fan mode), so the vendor app switches the mode first. usb-rea walks the actions in capture
+order and tracks the value last chosen by each state command (a command with one argument that is a
+lookup table, like `mode 1/2/3`, or an on/off label). A command gets `requires` (state, value, how
+often, the other values seen, evidence frames) when it was sent at least twice, every time after the
+state command chose the same value, while the capture also shows other commands used in a different
+value of that state. The report adds an "Only sent while `mode 3`" line, the CLI demo and the MCP
+`diff_actions` output list it under `states`, and the generated driver remembers what it set:
+`set_color()` first calls `set_mode(3)` unless the driver already set mode 3 since `open()`, and
+`Device(auto_state=False)` raises `StateError` instead. The synthetic fan's app only sets a color in
+mode 3 (`make_capture(..., device="fan", states=True)`, used by `usb-rea demo --device fan`).
+
+Limits: this is what the app did, not proof that the device refuses the command in other modes;
+capture the command in every mode you can to avoid a false precondition. Commands sent before any
+state command count as unknown and give no precondition, the state the device starts in is not read
+back (the driver sets the mode on the first gated call after `open()`), a reopened session resets
+what the driver knows, and states reported only in device replies, or a mode the app switches inside
+the same action, are not tracked yet.
+
 ## MCP server
 `pip install usb-rea` then add `usb-rea mcp` as a stdio server. Tools: `capture_start`, `capture_stop`, `mark_action`, `diff_actions`, `report`, `scaffold_driver`, `hid_descriptor` (decode a HID report descriptor / report payloads), `wireshark_dissector`, `replay_packet` (refuses unless the human confirmed). Analysis tools accept the same `labels` argument as the CLI for marker-free captures.
 
@@ -266,7 +290,8 @@ usb-rea hid capture.pcapng --decode "10ff0d1d000000" --type Output
 - [x] handshake retries: a step the app resent after no reply or a busy reply is resent by the driver too
 - [x] handshake reopens: the whole handshake sent again mid-capture is kept out of the actions
 - [x] handshake branches: the next steps chosen by a byte of the device's reply, replayed by the driver from the live reply
-- [ ] state machines beyond the handshake (commands only valid in some states)
+- [x] state preconditions: commands the app only sent after a mode command chose one value, set first by the driver
+- [ ] states read from device replies and mode switches inside an action
 
 ## Legal
 Reverse engineering for interoperability is permitted (EU Directive 2009/24/EC Art. 6, US DMCA §1201(f)). usb-rea only analyzes traffic of devices you own and never redistributes vendor code.

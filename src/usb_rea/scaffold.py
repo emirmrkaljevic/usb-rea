@@ -70,8 +70,12 @@ def _check_reply(step, spec, data):
                            " (Device(handshake=False) or open(check=False) skips the check)")
 
 
+class StateError(RuntimeError):
+    """A command the vendor app only sent in another state (report.md, "Only sent while")."""
+
+
 class Device:
-    def __init__(self, dev=None, handshake=True):
+    def __init__(self, dev=None, handshake=True, auto_state=True):
         self.dev = dev or usb.core.find(idVendor=VID, idProduct=PID)
         if self.dev is None:
             raise RuntimeError(f"device {{VID:04x}}:{{PID:04x}} not found")
@@ -79,6 +83,8 @@ class Device:
         self.sent = []
         self.session = []
         self.branches = {{}}
+        self.auto_state = auto_state   # False: raise StateError instead of switching the state first
+        self.state = {{}}   # what this driver last set with a state command (unknown until then)
         for cfg in self.dev:
             for intf in cfg:
                 if self.dev.is_kernel_driver_active(intf.bInterfaceNumber):
@@ -99,6 +105,7 @@ class Device:
         """
         self.session = []
         self.branches = {{}}
+        self.state = {{}}   # a new session: the device may have reset its mode
         steps = list(HANDSHAKE)
         i = 0
         while i < len(steps):
@@ -141,6 +148,15 @@ class Device:
             r = step["reply"]
             return bytes(self.dev.read(r["endpoint"], max(64, r["length"]), timeout))
         return None
+
+    def _require(self, name, value, setter):
+        """Put the device in the state the vendor app always used before this command."""
+        if self.state.get(name) == value:
+            return
+        if not self.auto_state:
+            raise StateError(f"the vendor app only sent this command with {{name}} {{value:g}}; call "
+                             f"set_{{name}}({{value:g}}) first (or use Device(auto_state=True))")
+        setter(value)
 
     def _send(self, spec, *values, prev=None):
         if prev is None:
@@ -362,6 +378,7 @@ def generate(proto: Protocol) -> str:
         queries.append(QUERY.format(name=qname, sig="self", call=f"{qarg}, {const}",
                                     doc=f"{how} and decode the reply ({doc}"))
 
+    setters = {r["state"] for r in proto.states}
     for c in proto.commands:
         const = _ident(c.name).upper()
         spec = command_spec(c)
@@ -370,13 +387,23 @@ def generate(proto: Protocol) -> str:
         sig = f"self, {args}" if args else "self"
         frames = ", ".join(map(str, c.frames[:8]))
         lines = "; ".join(f"byte {f.offset}: {f.describe()}" for f in c.fields if f.kind not in ("const",))
+        send = f"self._send({const}{', ' + args if args else ''})"
+        body = f"return {send}"
+        if c.name in setters:
+            body = f"r = {send}\n        self.state[{c.name!r}] = float(v0)\n        return r"
+        pre = "".join(f"self._require({r['state']!r}, {r['value']!r}, self.set_{_ident(r['state'])})\n        "
+                      for r in c.requires or [])
+        if c.requires:
+            lines += "\n\n        Only sent by the vendor app while " + ", ".join(
+                f"{r['state']} was {r['value']:g} (frames {', '.join(map(str, r['frames'][:8]))})" for r in c.requires
+            ) + ": sets that first, or raises StateError with Device(auto_state=False)."
         out.append(f'''
     def set_{_ident(c.name)}({sig}):
         """{c.name} ({c.confidence:.0%} confidence; evidence frames {frames}).
 
         {lines}
         """
-        return self._send({const}{", " + args if args else ""})
+        {pre}{body}
 ''')
     out += queries
     head, cls = out[0].split("class Device:", 1)

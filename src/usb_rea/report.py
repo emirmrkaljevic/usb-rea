@@ -19,7 +19,12 @@ def render(proto: Protocol, capture: str = "", sha256: str = "") -> str:
         if c.setup:
             chan += f", setup `{c.setup.hex(' ')}`"
         L += [f"## `{c.name}`", "", f"- Channel: {chan}", f"- Length: {c.length} bytes",
-              f"- Confidence: {c.confidence:.0%}"] + ([f"- HID: {hid_by_cmd[c.name]}"] if c.name in hid_by_cmd else []) + ["", "| Byte | Role | Encoding |", "|---|---|---|"]
+              f"- Confidence: {c.confidence:.0%}"] + [
+              f"- Only sent while `{r['state']} {r['value']:g}`: {r['count']}x, each after the `{r['state']}` "
+              f"command in frame(s) {', '.join(map(str, r['setter_frames']))}; other commands were used with "
+              f"`{r['state']}` {', '.join(f'{v:g}' for v in r['other_values'])}. The driver sets "
+              f"`{r['state']} {r['value']:g}` first (or raises `StateError` with `auto_state=False`)"
+              for r in c.requires or []] + ([f"- HID: {hid_by_cmd[c.name]}"] if c.name in hid_by_cmd else []) + ["", "| Byte | Role | Encoding |", "|---|---|---|"]
         for f in c.fields:
             L.append(f"| {f.offset} | {f.kind} | `{f.describe()}` |")
         L += ["", "Evidence:", "", "| Action | Payload | Frame |", "|---|---|---|"]
