@@ -1,6 +1,7 @@
 # Changelog
 
-## Unreleased
+## v0.7.3 (2026-10-28)
+Commands that only work in one mode.
 - state preconditions: a command the app only sent while a state command (one argument that is a
   lookup table, like `mode 1/2/3`, or on/off) had one value, at least twice and while other commands
   were used in other values, gets `requires` (state, value, count, other values, evidence frames).

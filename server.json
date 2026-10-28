@@ -6,12 +6,12 @@
     "url": "https://github.com/emirmrkaljevic/usb-rea",
     "source": "github"
   },
-  "version": "0.7.2",
+  "version": "0.7.3",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "usb-rea",
-      "version": "0.7.2",
+      "version": "0.7.3",
       "transport": {
         "type": "stdio"
       },
