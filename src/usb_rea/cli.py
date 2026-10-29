@@ -48,7 +48,7 @@ def main(argv=None) -> int:
 
     d = sub.add_parser("demo", help="generate a synthetic capture and run the whole pipeline")
     d.add_argument("-o", "--outdir", default="usb-rea-demo")
-    d.add_argument("--device", choices=["lamp", "fan", "dial"], default="lamp")
+    d.add_argument("--device", choices=["lamp", "fan", "dial", "lcd"], default="lamp")
 
     r = sub.add_parser("replay", help="send one packet to a real device (requires --yes)")
     r.add_argument("vid", type=_int)
@@ -167,9 +167,10 @@ def _demo(outdir: Path, device: str = "lamp") -> int:
     # it also opens a session first (hello, auth with the token from the hello reply, start) and twice more
     # later, once with a calibrate step because the fan answered auth with "needs calibration";
     # its app only sets a color in mode 3, which the driver then does first
+    # the lcd's app streams a JPEG video to the screen the whole time, which is set apart from brightness
     cap, _ = make_capture(outdir / f"{device}.pcap", device=device, poll=0.5 if device == "fan" else 0.0,
                           observe=device == "fan", handshake=device == "fan", branch=device == "fan",
-                          states=device == "fan")
+                          states=device == "fan", image_stream=device == "lcd")
     proto = analyze(cap)
     (outdir / "report.md").write_text(render(proto, str(cap), sha256(cap)))
     (outdir / f"{device}_driver.py").write_text(generate(proto))
@@ -180,6 +181,9 @@ def _demo(outdir: Path, device: str = "lamp") -> int:
           f"device {proto.vid:04x}:{proto.pid:04x}\n")
     for c in proto.commands:
         print(f"{c.name:12s} {c.confidence:4.0%}  " + " | ".join(f.describe() for f in c.fields))
+    for st in proto.streams:
+        from .streams import describe
+        print(f"\nimage stream, kept out of the commands: {describe(st)} (driver: send_image())")
     for r in proto.states:
         print(f"  {r['command']} only sent while {r['state']} {r['value']:g} ({r['count']}x; other commands "
               f"ran in {r['state']} {', '.join(f'{v:g}' for v in r['other_values'])}): the driver sets it first")

@@ -174,6 +174,7 @@ class Protocol:
     observations: list = field(default_factory=list)  # 'seen ...' markers and the reply bytes they named
     handshake: list = field(default_factory=list)  # messages sent once before the first action (handshake.py)
     states: list = field(default_factory=list)  # commands only sent in one state of a mode command (states.py)
+    streams: list = field(default_factory=list)  # image streams to a screen, kept out of the commands (streams.py)
 
     def to_dict(self):
         d = asdict(self)

@@ -11,6 +11,11 @@ Devices (VID 0x1234 / PID 0xABCD):
          with the 4-byte session token from the hello reply, start (after a calibrate step when auth
          answers "needs calibration", see branch=True)
   dial: A5 <cmd> <args> <sum8>; 32-bit LE position + 4-bit level bitfield
+  lcd:  screen on an AIO pump cap: brightness 12 01 00 80 <percent> padded to 64 bytes on interrupt
+        EP 0x01. With image_stream=True the vendor app also streams a 240x240 JPEG video on interrupt
+        EP 0x03 the whole time (see lcd_frames): 512-byte packets, header 08 <packets> 00 80 on the
+        first packet of a frame and 08 <index> 00 00 on the rest, the last one zero padded; the
+        device answers each frame with 08 81 + 14 zero bytes on EP 0x84
 """
 from __future__ import annotations
 import json
@@ -162,6 +167,33 @@ def fan_handshake(token: bytes, status: int = 0x01) -> list[tuple[bytes, bytes]]
     return steps + [(req(b"\x03\x01"), rep(b"\x03\x01"))]
 
 
+LCD_ACTIONS = ["brightness 0", "brightness 50", "brightness 100", "brightness 25", "brightness 75"]
+
+
+def encode_lcd(values: list[float]) -> bytes:
+    return bytes([0x12, 0x01, 0x00, 0x80, int(values[0])]).ljust(64, b"\x00")
+
+
+def fake_jpeg(n: int, size: int = 240, seed: int = 0) -> bytes:
+    """A JPEG-shaped image: SOI, JFIF APP0, SOF0 with the size, scan data without FF bytes, EOI.
+    Not decodable, but every marker the stream detector looks at is where a real encoder puts it."""
+    rnd = random.Random(seed)
+    app0 = b"\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00"
+    sof = b"\xff\xc0\x00\x11\x08" + size.to_bytes(2, "big") * 2 + b"\x03\x01\x22\x00\x02\x11\x01\x03\x11\x01"
+    sos = b"\xff\xda\x00\x0c\x03\x01\x00\x02\x11\x03\x11\x00\x3f\x00"
+    head = b"\xff\xd8" + app0 + sof + sos
+    body = bytes(rnd.randrange(0, 255) for _ in range(max(0, n - len(head) - 2)))
+    return head + body + b"\xff\xd9"
+
+
+def lcd_frames(image: bytes, chunk: int = 512) -> list[bytes]:
+    """Packets for one frame: header 08 <count> 00 80, then 08 <index> 00 00; last one padded."""
+    room = chunk - 4
+    parts = [image[i:i + room] for i in range(0, len(image), room)]
+    return [(bytes([0x08, len(parts) if k == 0 else k, 0x00, 0x80 if k == 0 else 0x00]) + p).ljust(chunk, b"\x00")
+            for k, p in enumerate(parts)]
+
+
 DIAL_ACTIONS = [
     # values chosen so each of the 4 LE bytes varies (required to claim u32 over four u8s)
     "position 0", "position 1000", "position 50000", "position 16843009", "position 2309737967",
@@ -187,7 +219,7 @@ def make_capture(path, actions: list[str] | None = None, transport: str = "bulk"
                  noise: bool = True, seed: int = 0, device: str = "lamp",
                  poll: float = 0.0, poll_seq: bool = False, observe: bool = False,
                  handshake: bool = False, reopen: bool = False, branch: bool = False,
-                 states: bool = False) -> tuple[Path, Path]:
+                 states: bool = False, image_stream: bool = False, fps: float = 20.0) -> tuple[Path, Path]:
     """Write <path> (pcap) and <path>.actions.json. Returns both paths.
 
     poll: if > 0, the "vendor app" also sends a status request every `poll` seconds on the
@@ -211,17 +243,25 @@ def make_capture(path, actions: list[str] | None = None, transport: str = "bulk"
     states: (fan) use FAN_STATE_ACTIONS, where color is only ever sent after 'mode 3' while fan
     speed is set in modes 1 and 2, so color gets a state precondition.
 
+    image_stream: (lcd) the vendor app streams a JPEG video to the screen at `fps` frames per second
+    for the whole capture (frames of 1.5 to 4 KB, so 3 to 8 packets each, the first one cut off by
+    the start of the capture), with an ack from the device after each frame.
+
     device: 'lamp' (see module doc), 'fan' (counter + 16-bit BE + RGB + lookup + CRC16),
-    or 'dial' (32-bit LE position + 4-bit brightness bitfield + sum8).
+    'dial' (32-bit LE position + 4-bit brightness bitfield + sum8) or 'lcd' (brightness, image stream).
     """
     from .model import split_label, split_values
     rnd = random.Random(seed)
     if states and device != "fan":
         raise ValueError("only the synthetic fan has state-dependent commands")
+    if image_stream and device != "lcd":
+        raise ValueError("only the synthetic lcd streams images")
     if device == "fan":
         actions = actions or (FAN_STATE_ACTIONS if states else FAN_ACTIONS)
     elif device == "dial":
         actions = actions or DIAL_ACTIONS
+    elif device == "lcd":
+        actions = actions or LCD_ACTIONS
     actions = actions or ["brightness 0%", "brightness 25%", "brightness 50%", "brightness 75%",
                           "brightness 100%", "power off", "power on", "hue 0", "hue 120", "hue 240"]
     w = UsbmonWriter()
@@ -262,10 +302,14 @@ def make_capture(path, actions: list[str] | None = None, transport: str = "bulk"
             msg = encode_fan(*split_values(label), seq)
         elif device == "dial":
             msg = encode_dial(*split_values(label))
+        elif device == "lcd":
+            msg = encode_lcd(split_values(label)[1])
         else:
             name, value = split_label(label)
             msg = encode(name, value if value is not None else 0)
-        if transport == "control":
+        if device == "lcd":
+            w.out(t + 0.3, 0x01, msg, xtype=1)
+        elif transport == "control":
             # HID SET_REPORT, output report 0
             w.control_out(t + 0.3, bytes([0x21, 0x09, 0x00, 0x02, 0, 0, len(msg), 0]), msg)
         else:
@@ -276,7 +320,7 @@ def make_capture(path, actions: list[str] | None = None, transport: str = "bulk"
                 targets.append((t + 0.3, int(split_values(label)[1][0])))
             elif msg[2] == 0x30:
                 modes.append((t + 0.3, msg[3]))
-        else:
+        elif device != "lcd":
             w.in_(t + 0.31, 0x81, bytes([0x55, msg[1], 0x00]))
         t += 1.0
         marks.append({"label": label, "start": start, "end": t - 0.01})
@@ -317,6 +361,18 @@ def make_capture(path, actions: list[str] | None = None, transport: str = "bulk"
                 w.out(at, 0x01, status)
             w.in_(at + 0.01, 0x81, reply)
             tp += poll
+    if image_stream:
+        video = random.Random(seed + 2)
+        tf, n = 1_760_000_000.0 + 0.02, 0
+        while tf < t:
+            pkts = lcd_frames(fake_jpeg(video.randint(1500, 4000), seed=seed * 1000 + n))
+            if n == 0:
+                pkts = pkts[2:]   # the capture started in the middle of a frame
+            for k, pkt in enumerate(pkts):
+                w.out(tf + 0.001 * k, 0x03, pkt, xtype=1)
+            w.in_(tf + 0.001 * len(pkts) + 0.001, 0x84, b"\x08\x81" + bytes(14))
+            tf += 1 / fps
+            n += 1
     path = Path(path)
     w.save(path)
     mpath = path.with_suffix(path.suffix + ".actions.json")

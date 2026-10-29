@@ -27,6 +27,11 @@ def analyze(capture: str | Path, markers: str | Path | None = None, device: int 
         device = max(counts, key=counts.get) if counts else None
     ts = [t for t in ts if device is None or t.device == device]
     vid, pid = ids.get(device, (None, None))
+    from .streams import drop_streams, find_streams
+    # pictures or video sent to a screen: thousands of image chunks that would drown the commands,
+    # so the stream's packets and its per-frame acks are set aside first
+    streams = find_streams(ts)
+    ts = drop_streams(ts, streams)
     # status polls / keep-alives would otherwise split --labels captures at the wrong place
     # and land in random actions, so they are set aside before anything else
     background = find_background(ts)
@@ -52,6 +57,7 @@ def analyze(capture: str | Path, markers: str | Path | None = None, device: int 
     # commands the app only sent after a mode command chose one value (a state precondition)
     proto.states = find_states(acts, proto.commands)
     proto.hid = hid_summary(ts, proto)
+    proto.streams = [{k: v for k, v in st.items() if k != "ids"} for st in streams]
     proto.background = [{"endpoint": b["key"][1], "xfer_type": b["key"][2],
                          "setup": b["key"][3] or None, "payload": pattern(b["data"], b["mask"]),
                          "count": b["count"], "period": b["period"], "frames": b["frames"][:5]}

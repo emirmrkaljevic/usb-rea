@@ -45,7 +45,7 @@ poll 1       7/7  0xa5 | = query byte 2 (0x40) | u16le rpm = raw, seen 800..4011
 ```
 It writes a synthetic capture of a fan controller (its vendor app first opens a session with a token the fan hands out, then polls the fan's status, and the markers note what the app's screen showed, `seen rpm 1207 temp 37 mode silent`), recovers the protocol and the replies, names the readings and the fan's mode, notices that the app only sets a color in mode 3, and writes `report.md` (every claim linked to Wireshark frame numbers) and a working pyusb driver that encodes values it never saw and decodes what the fan answers.
 
-`--device lamp` (default) is a simple 8-bit device; `--device dial` shows 32-bit values and packed bitfields:
+`--device lamp` (default) is a simple 8-bit device; `--device lcd` is a pump cap screen whose app streams a JPEG video while you change the brightness; `--device dial` shows 32-bit values and packed bitfields:
 ```
 position     100%  0xa5 | 0x01 | u32le round(value * 1 + 0) | sum8(bytes[0:6])
 level        100%  0xa5 | 0x02 | bits[0:4] = round(value * 1 + 0) | 0x00 | sum8(bytes[0:4])
@@ -66,6 +66,7 @@ level        100%  0xa5 | 0x02 | bits[0:4] = round(value * 1 + 0) | 0x00 | sum8(
 | modes / enum values (`seen mode silent`, `seen mode turbo`) | byte 5 `mode: 0x00 = silent, 0x02 = turbo`, or `bits[4:6] profile: …` beside flags |
 | signed readings, when the app shows negative values (`seen temp -5`) | byte 4 `i8 temp = raw`, bytes 2-3 `i16be …` |
 | handshake: messages sent once when the app opens the device, session tokens | step 2 bytes 3-6 = bytes 2-5 of the reply to step 1 |
+| image streams to a screen, kept apart from the commands | JPEG on EP 0x03, header `08 nn 00 80` then `08 ii 00 00`, ack `08 81` per frame |
 
 Linear fits must survive leave-one-out cross-checks; otherwise usb-rea falls back to an honest lookup table and says so.
 
@@ -223,6 +224,36 @@ back (the driver sets the mode on the first gated call after `open()`), a reopen
 what the driver knows, and states reported only in device replies, or a mode the app switches inside
 the same action, are not tracked yet.
 
+### Image streams: pictures and video sent to a screen
+
+Devices with a screen (AIO pump caps, keyboards and stream decks with an LCD) often get a picture or
+a whole video from the vendor app the entire time you click around: tens of thousands of large
+packets on one endpoint. Diffed as actions, that traffic buries the few real commands, so a
+brightness change gets read as "byte 1 of the video". usb-rea first looks for host→device channels
+where packets start an image (JPEG `FF D8 FF`, PNG, GIF) at the same offset in at least 3 frames.
+That offset is the per-packet header; a frame runs until the image's end marker (JPEG `FF D9`, with
+embedded thumbnails counted, PNG `IEND`), the next start or a pause. Each header byte is described
+as constant, `nn` (packets in the frame) or `ii` (the packet's index), chunks cut off at the start
+of the capture are recognised by that header, and a fixed device→host message sent about once per
+frame is the ack. All of it is set aside before background polls, handshakes and actions are
+analysed, so the commands come from the remaining traffic.
+
+The report gets an "Image stream" section (endpoint, format, frames, packets per frame, image size
+read from the JPEG SOF / PNG IHDR, frame rate, chunk size and padding, header pattern, ack), the MCP
+`diff_actions` output has `streams`, and the generated driver gets `send_image(jpeg_bytes)`, which
+cuts an image into chunks behind the captured header, fills in the count and index bytes, pads the
+last chunk and returns the ack. The synthetic LCD streams a 240x240 JPEG video at 20 frames per
+second next to its brightness command (`make_capture(..., device="lcd", image_stream=True)`, used by
+`usb-rea demo --device lcd`). On a real AIO pump LCD capture (75,788 image packets, 8,670 frames of
+a 320x320 JPEG, four brightness writes on another endpoint) this turns a wrong "brightness" made of
+video bytes into the right one: byte 4 = percent on EP 0x01.
+
+Limits: only streams of encoded images (JPEG, PNG, GIF) are found; raw pixel streams (RGB565 or
+RGB888 with no file header) and images split over several endpoints are not detected yet. The
+header roles are 8-bit (a 16-bit packet count or byte length is shown as `??` and sent as 0 by the
+driver), `send_image()` does not resize or re-encode (send an image of the captured size and
+format), and a stream needs at least 3 frames in the capture.
+
 ## MCP server
 `pip install usb-rea` then add `usb-rea mcp` as a stdio server. Tools: `capture_start`, `capture_stop`, `mark_action`, `diff_actions`, `report`, `scaffold_driver`, `hid_descriptor` (decode a HID report descriptor / report payloads), `wireshark_dissector`, `replay_packet` (refuses unless the human confirmed). Analysis tools accept the same `labels` argument as the CLI for marker-free captures.
 
@@ -292,6 +323,8 @@ usb-rea hid capture.pcapng --decode "10ff0d1d000000" --type Output
 - [x] handshake branches: the next steps chosen by a byte of the device's reply, replayed by the driver from the live reply
 - [x] state preconditions: commands the app only sent after a mode command chose one value, set first by the driver
 - [ ] states read from device replies and mode switches inside an action
+- [x] image streams: JPEG/PNG/GIF frames sent to a screen are kept apart from the commands, `send_image()` in the driver
+- [ ] raw pixel streams (RGB565/RGB888 without an image header) and 16-bit header fields
 
 ## Legal
 Reverse engineering for interoperability is permitted (EU Directive 2009/24/EC Art. 6, US DMCA §1201(f)). usb-rea only analyzes traffic of devices you own and never redistributes vendor code.

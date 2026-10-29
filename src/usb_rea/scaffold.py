@@ -237,6 +237,38 @@ def parse(spec, data, sent=b""):
 
 '''
 
+SEND_IMAGE = '''
+    def send_image(self, image, stream=0, timeout=1000):
+        """Send one encoded image (the format in STREAMS, e.g. JPEG bytes at the captured size) the way
+        the vendor app streamed it: cut into chunks behind the captured per-packet header (count and
+        index bytes filled in), the last chunk padded if the app padded it. Returns the device's ack
+        (None when the capture had none). Call it again for every frame of a video.
+        """
+        st = STREAMS[stream]
+        image = bytes(image)
+        magic = {"jpeg": b"\\xff\\xd8\\xff", "png": b"\\x89PNG", "gif": b"GIF8"}[st["format"]]
+        if not image.startswith(magic):
+            raise ValueError(f"the app streamed {st['format']} images; this does not start like one")
+        h = st["header_len"]
+        room = st["chunk"] - h
+        parts = [image[i:i + room] for i in range(0, len(image), room)] or [b""]
+        if len(parts) > 255 and (st["count"] is not None or st["index"] is not None):
+            raise ValueError(f"{len(parts)} packets do not fit the one-byte packet count; use a smaller image")
+        for k, part in enumerate(parts):
+            head = bytearray.fromhex(st["first"] if k == 0 else st["next"])
+            if st["count"] is not None and (k == 0 or st["count_in_next"]):
+                head[st["count"]] = len(parts)
+            if st["index"] is not None and k > 0:
+                head[st["index"]] = k + st["index_base"]
+            pkt = bytes(head) + part
+            if st["padded"]:
+                pkt = pkt.ljust(st["chunk"], b"\\x00")
+            self.dev.write(st["endpoint"], pkt, timeout)
+        if st["ack"]:
+            return bytes(self.dev.read(st["ack"]["endpoint"], max(64, st["ack"]["length"]), timeout))
+        return None
+'''
+
 QUERY = '''
     def {name}({sig}):
         """{doc}
@@ -406,6 +438,22 @@ def generate(proto: Protocol) -> str:
         {pre}{body}
 ''')
     out += queries
+    if proto.streams:
+        streams = []
+        for st in proto.streams:
+            def tpl(pattern):
+                return "".join("00" if b in ("nn", "ii", "??") else b for b in pattern.split())
+            streams.append(dict(format=st["format"], endpoint=st["endpoint"], chunk=st["chunk"],
+                                padded=st["padded"], header_len=st["header_len"],
+                                first=tpl(st["first_header"]), next=tpl(st["next_header"] or st["first_header"]),
+                                count=st["count_offset"], count_in_next=st["count_in_next"],
+                                index=st["index_offset"], index_base=st["index_base"] or 0,
+                                ack=dict(endpoint=st["ack"]["endpoint"], length=len(st["ack"]["payload"].split()),
+                                         expect=st["ack"]["payload"]) if st["ack"] else None))
+        specs.append("# image streams, first frames " + "; ".join(
+            ", ".join(map(str, st["first_frames"])) for st in proto.streams) + "\n")
+        specs.append(f"STREAMS = {streams!r}\n")
+        out.append(SEND_IMAGE)
     head, cls = out[0].split("class Device:", 1)
     parser = PARSER if proto.responses else ""
     out[0] = head + parser + "# ---- message specs (from inference) ----\n" + "".join(specs) + "\n\nclass Device:" + cls

@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+Image streams to a screen.
+- image streams: host->device channels whose packets start a JPEG, PNG or GIF at the same offset in
+  at least 3 frames are an image stream (a picture or video for an LCD). Its packets (frames run to
+  the image end marker, chunks cut off by the start of the capture are matched by their header) and
+  the device's per-frame ack are set aside before anything else, so a brightness write on another
+  endpoint is no longer merged with the video. `streams` lists endpoint, format, frames, packets per
+  frame, image size (JPEG SOF, PNG IHDR), frame rate, chunk size and padding, header pattern (`nn`
+  packet count, `ii` index) and the ack; the report has an "Image stream" section, the CLI demo and
+  MCP output list it, and the generated driver gets `send_image(jpeg_bytes)`. Synthetic LCD:
+  `make_capture(..., device="lcd", image_stream=True)`, used by `usb-rea demo --device lcd`.
+
 ## v0.7.3 (2026-10-28)
 Commands that only work in one mode.
 - state preconditions: a command the app only sent while a state command (one argument that is a

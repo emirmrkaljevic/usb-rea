@@ -13,6 +13,8 @@ def render(proto: Protocol, capture: str = "", sha256: str = "") -> str:
           "Frame numbers match Wireshark's `frame.number`; open the capture and jump to them to verify each claim.", ""]
     if proto.handshake:
         L += _handshake(proto)
+    if proto.streams:
+        L += _streams(proto)
     hid_by_cmd = {k: v for h in proto.hid for k, v in h.get("commands", {}).items()}
     for c in [x for c0 in proto.commands for x in (c0, *c0.steps)]:
         chan = f"{XFER_NAMES.get(c.xfer_type)} EP 0x{c.endpoint:02x}"
@@ -65,6 +67,39 @@ def render(proto: Protocol, capture: str = "", sha256: str = "") -> str:
     if proto.unmatched:
         L += ["## Actions with no host→device data", ""] + [f"- {u}" for u in proto.unmatched] + [""]
     return "\n".join(L)
+
+
+def _streams(proto: Protocol) -> list[str]:
+    L = []
+    for s in proto.streams:
+        chan = f"{XFER_NAMES.get(s['xfer_type'])} EP 0x{s['endpoint']:02x}"
+        L += [f"## Image stream on {chan} (kept out of the commands)", "",
+              f"{s['format'].upper()} images sent continuously (a picture or video for a screen): each frame "
+              "starts with a packet that holds the image's start marker and runs until its end marker. These "
+              "packets (and the device's per-frame ack) were left out of the action diff, so the commands "
+              "below come from the remaining traffic. The generated driver has `send_image()`.", "",
+              f"- Frames: {s['frames']} ({s['packets_per_frame'][0]} to {s['packets_per_frame'][1]} packets each, "
+              f"{s['packets']} packets in all" + (f", {s['partial']} of them from a frame cut off by the capture"
+                                                  if s.get("partial") else "") + ")",
+              f"- First frames start at: {', '.join(map(str, s['first_frames']))}"]
+        if s["size"]:
+            L.append(f"- Image size: {s['size'][0]}x{s['size'][1]}" + (
+                f", {s['image_bytes'][0]} to {s['image_bytes'][1]} bytes" if s["image_bytes"] else ""))
+        if s["fps"]:
+            L.append(f"- Rate: about {s['fps']:g} frames per second")
+        L.append(f"- Chunk: {s['chunk']} bytes per packet" + (", the last one padded" if s["padded"] else ""))
+        if s["header_len"]:
+            L.append(f"- Header ({s['header_len']} bytes): first packet `{s['first_header']}`" + (
+                f", then `{s['next_header']}`" if s["next_header"] else "") + " (`nn` = packets in the frame, "
+                "`ii` = packet index in the frame, `??` = varies without a pattern)")
+        else:
+            L.append("- No per-packet header: the image bytes are sent as they are")
+        if s["ack"]:
+            a = s["ack"]
+            L.append(f"- Ack: `{a['payload']}` on EP 0x{a['endpoint']:02x}, {a['count']}x "
+                     f"(frames {', '.join(map(str, a['frames']))})")
+        L.append("")
+    return L
 
 
 def _handshake(proto: Protocol) -> list[str]:
