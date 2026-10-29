@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.7.4 (2026-10-29)
 Image streams to a screen.
 - image streams: host->device channels whose packets start a JPEG, PNG or GIF at the same offset in
   at least 3 frames are an image stream (a picture or video for an LCD). Its packets (frames run to
