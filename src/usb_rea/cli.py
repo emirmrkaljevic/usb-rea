@@ -49,6 +49,8 @@ def main(argv=None) -> int:
     d = sub.add_parser("demo", help="generate a synthetic capture and run the whole pipeline")
     d.add_argument("-o", "--outdir", default="usb-rea-demo")
     d.add_argument("--device", choices=["lamp", "fan", "dial", "lcd"], default="lamp")
+    d.add_argument("--raw", choices=["rgb565", "rgb888"], default=None,
+                   help="lcd only: stream raw pixels instead of a JPEG video")
 
     r = sub.add_parser("replay", help="send one packet to a real device (requires --yes)")
     r.add_argument("vid", type=_int)
@@ -91,7 +93,9 @@ def main(argv=None) -> int:
     if a.cmd == "hid":
         return _hid(a)
     if a.cmd == "demo":
-        return _demo(Path(a.outdir), a.device)
+        if a.raw and a.device != "lcd":
+            p.error("--raw needs --device lcd")
+        return _demo(Path(a.outdir), a.device, a.raw)
     if a.cmd == "transfers":
         from .pcap import read_transfers
         for t in read_transfers(a.capture):
@@ -156,7 +160,7 @@ def _hid(a) -> int:
     return 0
 
 
-def _demo(outdir: Path, device: str = "lamp") -> int:
+def _demo(outdir: Path, device: str = "lamp", raw: str | None = None) -> int:
     from .synth import make_capture
     from .pipeline import analyze, sha256
     from .report import render
@@ -168,9 +172,10 @@ def _demo(outdir: Path, device: str = "lamp") -> int:
     # later, once with a calibrate step because the fan answered auth with "needs calibration";
     # its app only sets a color in mode 3, which the driver then does first
     # the lcd's app streams a JPEG video to the screen the whole time, which is set apart from brightness
+    # (with --raw it sends raw pixels instead, behind a draw command that names the screen region)
     cap, _ = make_capture(outdir / f"{device}.pcap", device=device, poll=0.5 if device == "fan" else 0.0,
                           observe=device == "fan", handshake=device == "fan", branch=device == "fan",
-                          states=device == "fan", image_stream=device == "lcd")
+                          states=device == "fan", image_stream=device == "lcd", raw=raw)
     proto = analyze(cap)
     (outdir / "report.md").write_text(render(proto, str(cap), sha256(cap)))
     (outdir / f"{device}_driver.py").write_text(generate(proto))

@@ -94,9 +94,12 @@ def build():
         `retries`, `reopens`, and `branches` on a step whose reply byte decided what the app sent next).
         `states` lists commands the app only sent after a mode command chose one value (also on the
         command as `requires`: state, value, count, other values seen, evidence frames).
-        `streams` lists continuous image streams (JPEG/PNG/GIF sent to a screen): endpoint, format, frame
-        and packet counts, chunk size, per-packet header (`nn` packet count, `ii` index), image size,
-        frame rate and the device's per-frame `ack`; those packets are kept out of the commands.
+        `streams` lists continuous image streams to a screen (JPEG/PNG/GIF, or raw RGB565/RGB888 pixels
+        found by size with `raw` true): endpoint, format, frame and packet counts, chunk size, per-packet
+        header (`nn` packet count, `ii` index, 8 or 16 bit), image size, frame rate, the device's
+        per-frame `ack` and for raw streams `header_packet` (the command before each frame), `region`
+        (x/y/width/height fields), `byteorder` and `size_alternatives`; those packets are kept out of
+        the commands.
 
         Read-only analysis: does not write files or talk to hardware. Requires either markers from
         mark_action or `labels` for a finished capture with pauses between clicks. Prefer report
@@ -140,8 +143,9 @@ def build():
         {'rpm': 1180, 'temp': 34, 'mode': 'turbo', 'ok': True}). When the capture has a handshake,
         Device() replays it in open() before any command and checks the fixed reply bytes. A command
         the app only sent in one mode first calls the mode setter (Device(auto_state=False) raises
-        StateError instead). A capture with an image stream to a screen adds send_image(jpeg_bytes),
-        which chunks the image behind the captured header and returns the device's ack.
+        StateError instead). A capture with an image stream to a screen adds send_image(image), which
+        takes JPEG bytes (or, for a raw stream, a Pillow image or RGB565/RGB888 bytes, optionally a
+        region at x, y), chunks it behind the captured header and returns the device's ack.
 
         Read-only analysis that returns driver source as text (does not write a file or open the
         device). Same capture/markers/labels inputs as report. Prefer wireshark_dissector when the

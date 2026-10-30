@@ -67,6 +67,7 @@ level        100%  0xa5 | 0x02 | bits[0:4] = round(value * 1 + 0) | 0x00 | sum8(
 | signed readings, when the app shows negative values (`seen temp -5`) | byte 4 `i8 temp = raw`, bytes 2-3 `i16be …` |
 | handshake: messages sent once when the app opens the device, session tokens | step 2 bytes 3-6 = bytes 2-5 of the reply to step 1 |
 | image streams to a screen, kept apart from the commands | JPEG on EP 0x03, header `08 nn 00 80` then `08 ii 00 00`, ack `08 81` per frame |
+| raw pixel streams (RGB565/RGB888), found by size and by the region the draw command names | 320x480 RGB565 LE after `rr rr rr rr rr c5` (Turing Smart Screen rev A) |
 
 Linear fits must survive leave-one-out cross-checks; otherwise usb-rea falls back to an honest lookup table and says so.
 
@@ -248,11 +249,43 @@ second next to its brightness command (`make_capture(..., device="lcd", image_st
 a 320x320 JPEG, four brightness writes on another endpoint) this turns a wrong "brightness" made of
 video bytes into the right one: byte 4 = percent on EP 0x01.
 
-Limits: only streams of encoded images (JPEG, PNG, GIF) are found; raw pixel streams (RGB565 or
-RGB888 with no file header) and images split over several endpoints are not detected yet. The
-header roles are 8-bit (a 16-bit packet count or byte length is shown as `??` and sent as 0 by the
-driver), `send_image()` does not resize or re-encode (send an image of the captured size and
-format), and a stream needs at least 3 frames in the capture.
+Raw pixel streams have no magic bytes, so they are found by size. Many cheap case and AIO screens
+take plain RGB565 (2 bytes a pixel) or RGB888 (3 bytes) behind a short draw command. On one
+host→device channel usb-rea looks for runs of large packets with no pause between them (all but the
+last the same length) whose payload is exactly width x height x bytes per pixel for a common screen
+size (80x160 up to 1920x480, both orientations), or exactly the region the short packet sent just
+before the run names: x, y, width, height or x0, y0, x1, y1 as 16-bit fields (little or big endian),
+or four 10-bit fields packed into 5 bytes as on the Turing Smart Screen rev A. With a region, partial
+redraws (a clock, a sensor value) count as frames of the same stream. Per-packet headers are found
+the same way as for JPEG, and a packet count or index above 255 is now read as a 16-bit field
+(`nn nn`, `ii ii`, with its byte order). A 16- or 32-bit byte count in the draw command is marked
+`ll`. For RGB565 the pixel byte order is the one that makes neighbouring pixels smoother. One
+transfer per frame (a whole screen handed to the USB stack at once) and several frames back to back
+in one run are split by the screen size. The draw command packets are set aside with the pixels;
+other commands on the same endpoint (hello, brightness, orientation) stay commands.
+
+The report then says "Raw RGB565 pixels", the screen size and frame size, other sizes with the same
+byte count, the byte order, the region fields and how many frames redraw only part of the screen,
+and the draw command pattern (`xx`/`yy` position, `ww`/`hh` size, `ex`/`ey` end position, `rr`
+packed region, `ll` byte count). The driver's `send_image()` takes a Pillow image (converted to
+RGB565 in the captured byte order, or RGB888; Pillow is not needed otherwise) or bytes already in
+that format, writes the draw command with the region filled in and then the pixels, so
+`send_image(clock, x=100, y=8, size=(48, 16))` redraws just a corner. The synthetic LCD can stream
+raw pixels too: `make_capture(..., device="lcd", image_stream=True, raw="rgb565")` (160x128, draw
+command with x, y, width, height as u16 LE, every 4th frame a 48x16 clock) or `raw="rgb888"` (128x160,
+64-byte packets with a u16 LE packet index and count), used by `usb-rea demo --device lcd --raw rgb565`.
+The tests also check a Turing Smart Screen rev A fixture written from its public protocol
+description (6-byte commands, `DISPLAY_BITMAP` = 197, RGB565 little-endian pixels).
+
+Limits: images split over several endpoints are not detected yet. A raw stream needs at least 3
+frames whose payload is a listed screen size or matches the region fields; a screen size not in the
+list without a region command is missed, and the same byte count can fit several sizes (320x480
+RGB565 is also 480x320, and 320x320 RGB888), which the report lists so you can check on the device.
+Region fields are only looked for in the separate draw command (not inside the first pixel packet),
+width and height are expected in that order, RGB888 channel order (RGB or BGR) is not worked out,
+and a frame with a pause longer than 30 ms inside it is split. `send_image()` does not resize or
+re-encode (send an image of the captured size and format), and a stream needs at least 3 frames in
+the capture.
 
 ## MCP server
 `pip install usb-rea` then add `usb-rea mcp` as a stdio server. Tools: `capture_start`, `capture_stop`, `mark_action`, `diff_actions`, `report`, `scaffold_driver`, `hid_descriptor` (decode a HID report descriptor / report payloads), `wireshark_dissector`, `replay_packet` (refuses unless the human confirmed). Analysis tools accept the same `labels` argument as the CLI for marker-free captures.
@@ -324,7 +357,8 @@ usb-rea hid capture.pcapng --decode "10ff0d1d000000" --type Output
 - [x] state preconditions: commands the app only sent after a mode command chose one value, set first by the driver
 - [ ] states read from device replies and mode switches inside an action
 - [x] image streams: JPEG/PNG/GIF frames sent to a screen are kept apart from the commands, `send_image()` in the driver
-- [ ] raw pixel streams (RGB565/RGB888 without an image header) and 16-bit header fields
+- [x] raw pixel streams (RGB565/RGB888 without an image header) and 16-bit header fields
+- [ ] image streams split over several endpoints, RGB888 channel order
 
 ## Legal
 Reverse engineering for interoperability is permitted (EU Directive 2009/24/EC Art. 6, US DMCA §1201(f)). usb-rea only analyzes traffic of devices you own and never redistributes vendor code.

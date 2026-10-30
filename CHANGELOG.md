@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+Raw pixel streams to a screen.
+- raw image streams: RGB565 and RGB888 pixels with no image file format are found by size. Runs of
+  large host->device packets with no pause between them whose payload is a common screen size
+  (width x height x 2 or 3), or the region a short draw command sent just before names (x, y, width,
+  height or x0, y0, x1, y1 as 16-bit LE/BE fields, or four packed 10-bit fields as on the Turing
+  Smart Screen rev A), are frames of a stream when there are at least 3. Partial redraws count with
+  a region; one transfer per frame and frames sent back to back are split by the screen size. The
+  pixels and draw commands are set aside like JPEG streams, other commands on the endpoint stay.
+  `streams` gains `raw`, `header_packet`, `region`, `length_field`, `byteorder` (RGB565 order from
+  pixel smoothness), `size_alternatives`, `frame_bytes` and `regions`; the report has a raw variant
+  of the "Image stream" section.
+- 16-bit header fields: a packet count or index above 255 in a per-packet header is read as a u16
+  (`nn nn`, `ii ii`, with `count_width`/`count_endian`, `index_width`/`index_endian`); the driver
+  fills it in.
+- driver `send_image()` takes a Pillow image (converted to RGB565 in the captured byte order, or
+  RGB888) or raw pixel bytes for a raw stream, writes the draw command with the region filled in and
+  can redraw part of the screen (`x`, `y`, `size`).
+- synthetic raw LCD: `make_capture(..., device="lcd", image_stream=True, raw="rgb565" | "rgb888")`,
+  `usb-rea demo --device lcd --raw rgb565`; tests include a Turing Smart Screen rev A fixture written
+  from its public protocol description.
+
 ## v0.7.4 (2026-10-29)
 Image streams to a screen.
 - image streams: host->device channels whose packets start a JPEG, PNG or GIF at the same offset in

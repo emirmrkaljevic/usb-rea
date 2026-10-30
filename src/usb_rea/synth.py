@@ -194,6 +194,31 @@ def lcd_frames(image: bytes, chunk: int = 512) -> list[bytes]:
             for k, p in enumerate(parts)]
 
 
+def gradient(w: int, h: int, n: int = 0, bpp: int = 2, order: str = "little") -> bytes:
+    """A smooth test picture (red across, green down, shifted by n) as RGB565 or RGB888 pixels."""
+    out = bytearray()
+    for y in range(h):
+        for x in range(w):
+            r, g, b = (x * 255 // max(1, w - 1) + 4 * n) & 0xFF, y * 255 // max(1, h - 1), 0x60
+            if bpp == 3:
+                out += bytes((r, g, b))
+            else:
+                out += ((r >> 3) << 11 | (g >> 2) << 5 | b >> 3).to_bytes(2, order)
+    return bytes(out)
+
+
+def raw_header(x: int, y: int, w: int, h: int) -> bytes:
+    """Synthetic raw LCD 'draw' command: 55 AA 02 00, then x, y, width, height as u16 LE."""
+    return b"\x55\xaa\x02\x00" + b"".join(v.to_bytes(2, "little") for v in (x, y, w, h))
+
+
+def raw888_packets(pixels: bytes, chunk: int = 64) -> list[bytes]:
+    """RGB888 frame cut into packets behind a 4-byte header: packet index and count as u16 LE."""
+    room = chunk - 4
+    parts = [pixels[i:i + room] for i in range(0, len(pixels), room)]
+    return [k.to_bytes(2, "little") + len(parts).to_bytes(2, "little") + p for k, p in enumerate(parts)]
+
+
 DIAL_ACTIONS = [
     # values chosen so each of the 4 LE bytes varies (required to claim u32 over four u8s)
     "position 0", "position 1000", "position 50000", "position 16843009", "position 2309737967",
@@ -219,7 +244,8 @@ def make_capture(path, actions: list[str] | None = None, transport: str = "bulk"
                  noise: bool = True, seed: int = 0, device: str = "lamp",
                  poll: float = 0.0, poll_seq: bool = False, observe: bool = False,
                  handshake: bool = False, reopen: bool = False, branch: bool = False,
-                 states: bool = False, image_stream: bool = False, fps: float = 20.0) -> tuple[Path, Path]:
+                 states: bool = False, image_stream: bool = False, fps: float = 20.0,
+                 raw: str | None = None) -> tuple[Path, Path]:
     """Write <path> (pcap) and <path>.actions.json. Returns both paths.
 
     poll: if > 0, the "vendor app" also sends a status request every `poll` seconds on the
@@ -246,6 +272,11 @@ def make_capture(path, actions: list[str] | None = None, transport: str = "bulk"
     image_stream: (lcd) the vendor app streams a JPEG video to the screen at `fps` frames per second
     for the whole capture (frames of 1.5 to 4 KB, so 3 to 8 packets each, the first one cut off by
     the start of the capture), with an ack from the device after each frame.
+    raw: (lcd with image_stream) stream raw pixels instead of JPEG on bulk EP 0x02. 'rgb565': a
+    160x128 screen at 10 fps, each frame a 12-byte draw command (55 AA 02 00, x, y, width, height as
+    u16 LE) then RGB565 LE pixels in 512-byte packets; every 4th frame only redraws a 48x16 clock at
+    (100, 8); ack 55 AA 82 00 on EP 0x82. 'rgb888': a 128x160 screen at 5 fps with no command, 64-byte
+    packets each starting with the packet index and count as u16 LE (1024 packets a frame).
 
     device: 'lamp' (see module doc), 'fan' (counter + 16-bit BE + RGB + lookup + CRC16),
     'dial' (32-bit LE position + 4-bit brightness bitfield + sum8) or 'lcd' (brightness, image stream).
@@ -256,6 +287,8 @@ def make_capture(path, actions: list[str] | None = None, transport: str = "bulk"
         raise ValueError("only the synthetic fan has state-dependent commands")
     if image_stream and device != "lcd":
         raise ValueError("only the synthetic lcd streams images")
+    if raw not in (None, "rgb565", "rgb888") or (raw and not image_stream):
+        raise ValueError("raw is 'rgb565' or 'rgb888' and needs image_stream=True")
     if device == "fan":
         actions = actions or (FAN_STATE_ACTIONS if states else FAN_ACTIONS)
     elif device == "dial":
@@ -361,7 +394,26 @@ def make_capture(path, actions: list[str] | None = None, transport: str = "bulk"
                 w.out(at, 0x01, status)
             w.in_(at + 0.01, 0x81, reply)
             tp += poll
-    if image_stream:
+    if image_stream and raw:
+        tf, n = 1_760_000_000.0 + 0.02, 0
+        fps = 10.0 if raw == "rgb565" else 5.0
+        while tf < t:
+            if raw == "rgb565":
+                x, y, wd, ht = (100, 8, 48, 16) if n % 4 == 3 else (0, 0, 160, 128)
+                pix = gradient(wd, ht, n)
+                pkts = [raw_header(x, y, wd, ht)] + [pix[i:i + 512] for i in range(0, len(pix), 512)]
+            else:
+                pkts = raw888_packets(gradient(128, 160, n, bpp=3))
+            if n == 0:
+                pkts = pkts[3:]   # the capture started in the middle of a frame
+            step = 0.0004 if raw == "rgb565" else 0.0001
+            for k, pkt in enumerate(pkts):
+                w.out(tf + step * k, 0x02, pkt, xtype=3)
+            if raw == "rgb565":
+                w.in_(tf + step * len(pkts) + 0.001, 0x82, b"\x55\xaa\x82\x00")
+            tf += 1 / fps
+            n += 1
+    elif image_stream:
         video = random.Random(seed + 2)
         tf, n = 1_760_000_000.0 + 0.02, 0
         while tf < t:

@@ -73,16 +73,39 @@ def _streams(proto: Protocol) -> list[str]:
     L = []
     for s in proto.streams:
         chan = f"{XFER_NAMES.get(s['xfer_type'])} EP 0x{s['endpoint']:02x}"
+        if s.get("raw"):
+            intro = (f"Raw {s['format'].upper()} pixels sent continuously (a picture or video for a screen, no "
+                     "image file format): runs of large packets with no pause between them whose payload is "
+                     "exactly a common screen size" + (" or the screen region the command packet before them "
+                     "names" if s.get("region") else "") + ". ")
+        else:
+            intro = (f"{s['format'].upper()} images sent continuously (a picture or video for a screen): each "
+                     "frame starts with a packet that holds the image's start marker and runs until its end "
+                     "marker. ")
         L += [f"## Image stream on {chan} (kept out of the commands)", "",
-              f"{s['format'].upper()} images sent continuously (a picture or video for a screen): each frame "
-              "starts with a packet that holds the image's start marker and runs until its end marker. These "
-              "packets (and the device's per-frame ack) were left out of the action diff, so the commands "
-              "below come from the remaining traffic. The generated driver has `send_image()`.", "",
+              intro + "These packets (and the device's per-frame ack) were left out of the action diff, so the "
+              "commands below come from the remaining traffic. The generated driver has `send_image()`.", "",
               f"- Frames: {s['frames']} ({s['packets_per_frame'][0]} to {s['packets_per_frame'][1]} packets each, "
               f"{s['packets']} packets in all" + (f", {s['partial']} of them from a frame cut off by the capture"
                                                   if s.get("partial") else "") + ")",
               f"- First frames start at: {', '.join(map(str, s['first_frames']))}"]
-        if s["size"]:
+        if s["size"] and s.get("raw"):
+            bpp = {"rgb565": 2, "rgb888": 3}[s["format"]]
+            L.append(f"- Screen: {s['size'][0]}x{s['size'][1]} {s['format'].upper()}, {s['frame_bytes']} bytes "
+                     f"({bpp} per pixel) per full frame" + (
+                         f" (the same byte count fits {', '.join(s['size_alternatives'])}; check on the device)"
+                         if s.get("size_alternatives") else ""))
+            if s["format"] == "rgb565":
+                L.append("- Pixel byte order: " + (f"{s['byteorder']}-endian (neighbouring pixels are smooth that way)"
+                                                   if s.get("byteorder") else "not clear from the pixels; try little-endian first"))
+            if s.get("region"):
+                rg = s["region"]
+                what = {"xywh": "x, y, width, height as 16-bit", "box": "x0, y0, x1, y1 (inclusive) as 16-bit",
+                        "wh": "width, height as 16-bit", "box10": "x0, y0, x1, y1 as four 10-bit fields packed into 5 bytes"}
+                L.append(f"- Region: the command gives {what[rg['layout']]}" + (
+                    f" {rg['endian']}-endian" if rg["layout"] != "box10" else "") + f" fields from byte {rg['offset']}; "
+                    f"{s['regions']} of {s['frames']} frames redraw only part of the screen")
+        elif s["size"]:
             L.append(f"- Image size: {s['size'][0]}x{s['size'][1]}" + (
                 f", {s['image_bytes'][0]} to {s['image_bytes'][1]} bytes" if s["image_bytes"] else ""))
         if s["fps"]:
@@ -91,9 +114,17 @@ def _streams(proto: Protocol) -> list[str]:
         if s["header_len"]:
             L.append(f"- Header ({s['header_len']} bytes): first packet `{s['first_header']}`" + (
                 f", then `{s['next_header']}`" if s["next_header"] else "") + " (`nn` = packets in the frame, "
-                "`ii` = packet index in the frame, `??` = varies without a pattern)")
+                "`ii` = packet index in the frame, doubled for a 16-bit field, `??` = varies without a pattern)")
+            wide = [f"packet {r} {s.get(r + '_endian')}-endian" for r in ("count", "index") if s.get(r + "_width") == 2]
+            if wide:
+                L.append(f"- 16-bit header fields: {', '.join(wide)}")
         else:
             L.append("- No per-packet header: the image bytes are sent as they are")
+        if s.get("header_packet"):
+            lf = s.get("length_field")
+            L.append(f"- Command packet before each frame: `{s['header_packet']}` (`xx`/`yy` = position, `ww`/`hh` = "
+                     "size, `ex`/`ey` = end position, `rr` = packed region, `ll` = byte count" + (
+                         f" as {8 * lf['width']}-bit {lf['endian']}-endian" if lf else "") + ", `??` = varies)")
         if s["ack"]:
             a = s["ack"]
             L.append(f"- Ack: `{a['payload']}` on EP 0x{a['endpoint']:02x}, {a['count']}x "

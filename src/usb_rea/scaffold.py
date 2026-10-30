@@ -238,28 +238,44 @@ def parse(spec, data, sent=b""):
 '''
 
 SEND_IMAGE = '''
-    def send_image(self, image, stream=0, timeout=1000):
-        """Send one encoded image (the format in STREAMS, e.g. JPEG bytes at the captured size) the way
-        the vendor app streamed it: cut into chunks behind the captured per-packet header (count and
-        index bytes filled in), the last chunk padded if the app padded it. Returns the device's ack
-        (None when the capture had none). Call it again for every frame of a video.
+    def send_image(self, image, x=0, y=0, size=None, stream=0, timeout=1000):
+        """Send one picture the way the vendor app streamed it and return the device's ack (None when
+        the capture had none). Call it again for every frame of a video.
+
+        Encoded stream (STREAMS format jpeg, png or gif): pass the image file bytes at the captured
+        size; they are cut into chunks behind the captured per-packet header (count and index filled
+        in), the last chunk padded if the app padded it.
+        Raw stream (rgb565, rgb888): pass a Pillow image (converted to the stream's pixel format and
+        byte order) or bytes already in that format. When the app's command before each frame names
+        a screen region, a smaller picture can be drawn at (x, y); give `size=(w, h)` with raw bytes.
         """
         st = STREAMS[stream]
-        image = bytes(image)
-        magic = {"jpeg": b"\\xff\\xd8\\xff", "png": b"\\x89PNG", "gif": b"GIF8"}[st["format"]]
-        if not image.startswith(magic):
-            raise ValueError(f"the app streamed {st['format']} images; this does not start like one")
-        h = st["header_len"]
-        room = st["chunk"] - h
+        w = h = None
+        if st["raw"]:
+            image, w, h = self._pixels(image, st, size)
+            if [w, h] != st["size"] and not st["region"]:
+                raise ValueError(f"this screen takes whole {st['size'][0]}x{st['size'][1]} frames")
+        else:
+            image = bytes(image)
+            magic = {"jpeg": b"\\xff\\xd8\\xff", "png": b"\\x89PNG", "gif": b"GIF8"}[st["format"]]
+            if not image.startswith(magic):
+                raise ValueError(f"the app streamed {st['format']} images; this does not start like one")
+        hl = st["header_len"]
+        room = st["chunk"] - hl
         parts = [image[i:i + room] for i in range(0, len(image), room)] or [b""]
-        if len(parts) > 255 and (st["count"] is not None or st["index"] is not None):
-            raise ValueError(f"{len(parts)} packets do not fit the one-byte packet count; use a smaller image")
+        for role in ("count", "index"):
+            if st[role] is not None and len(parts) >= 1 << (8 * (st[role + "_width"] or 1)):
+                raise ValueError(f"{len(parts)} packets do not fit the packet {role} field; use a smaller image")
+        if st["header_packet"]:
+            self.dev.write(st["endpoint"], self._frame_command(st, x, y, w, h, len(image)), timeout)
         for k, part in enumerate(parts):
             head = bytearray.fromhex(st["first"] if k == 0 else st["next"])
             if st["count"] is not None and (k == 0 or st["count_in_next"]):
-                head[st["count"]] = len(parts)
+                cw = st["count_width"] or 1
+                head[st["count"]:st["count"] + cw] = len(parts).to_bytes(cw, st["count_endian"] or "little")
             if st["index"] is not None and k > 0:
-                head[st["index"]] = k + st["index_base"]
+                iw = st["index_width"] or 1
+                head[st["index"]:st["index"] + iw] = (k + st["index_base"]).to_bytes(iw, st["index_endian"] or "little")
             pkt = bytes(head) + part
             if st["padded"]:
                 pkt = pkt.ljust(st["chunk"], b"\\x00")
@@ -267,6 +283,45 @@ SEND_IMAGE = '''
         if st["ack"]:
             return bytes(self.dev.read(st["ack"]["endpoint"], max(64, st["ack"]["length"]), timeout))
         return None
+
+    @staticmethod
+    def _pixels(image, st, size=None):
+        """(pixel bytes, width, height) in the stream's raw format from a Pillow image or raw bytes."""
+        bpp = {"rgb565": 2, "rgb888": 3}[st["format"]]
+        if hasattr(image, "convert") and hasattr(image, "size"):   # a Pillow image
+            w, h = image.size
+            rgb = image.convert("RGB").tobytes()
+            if bpp == 3:
+                return rgb, w, h
+            order = st["byteorder"] or "little"
+            out = bytearray()
+            for i in range(0, len(rgb), 3):
+                r, g, b = rgb[i], rgb[i + 1], rgb[i + 2]
+                out += ((r >> 3) << 11 | (g >> 2) << 5 | b >> 3).to_bytes(2, order)
+            return bytes(out), w, h
+        data = bytes(image)
+        w, h = size or st["size"]
+        if len(data) != w * h * bpp:
+            raise ValueError(f"{len(data)} bytes is not {w}x{h} {st['format']} ({w * h * bpp} bytes)")
+        return data, w, h
+
+    @staticmethod
+    def _frame_command(st, x, y, w, h, n):
+        """The command packet the app sent before each frame, with the region and byte count filled in."""
+        cmd = bytearray.fromhex(st["header_packet"])
+        rg = st["region"]
+        if rg:
+            o = rg["offset"]
+            if rg["layout"] == "box10":
+                v = x << 30 | y << 20 | (x + w - 1) << 10 | (y + h - 1)
+                cmd[o:o + 5] = v.to_bytes(5, "big")
+            else:
+                vals = {"xywh": (x, y, w, h), "box": (x, y, x + w - 1, y + h - 1), "wh": (w, h)}[rg["layout"]]
+                cmd[o:o + 2 * len(vals)] = b"".join(v.to_bytes(2, rg["endian"]) for v in vals)
+        lf = st["length_field"]
+        if lf:
+            cmd[lf["offset"]:lf["offset"] + lf["width"]] = n.to_bytes(lf["width"], lf["endian"])
+        return bytes(cmd)
 '''
 
 QUERY = '''
@@ -442,12 +497,17 @@ def generate(proto: Protocol) -> str:
         streams = []
         for st in proto.streams:
             def tpl(pattern):
-                return "".join("00" if b in ("nn", "ii", "??") else b for b in pattern.split())
+                return "".join(b if re.fullmatch(r"[0-9a-f]{2}", b) else "00" for b in pattern.split())
             streams.append(dict(format=st["format"], endpoint=st["endpoint"], chunk=st["chunk"],
                                 padded=st["padded"], header_len=st["header_len"],
                                 first=tpl(st["first_header"]), next=tpl(st["next_header"] or st["first_header"]),
                                 count=st["count_offset"], count_in_next=st["count_in_next"],
+                                count_width=st.get("count_width"), count_endian=st.get("count_endian"),
                                 index=st["index_offset"], index_base=st["index_base"] or 0,
+                                index_width=st.get("index_width"), index_endian=st.get("index_endian"),
+                                raw=bool(st.get("raw")), size=st["size"], byteorder=st.get("byteorder"),
+                                header_packet=tpl(st["header_packet"]) if st.get("header_packet") else None,
+                                region=st.get("region"), length_field=st.get("length_field"),
                                 ack=dict(endpoint=st["ack"]["endpoint"], length=len(st["ack"]["payload"].split()),
                                          expect=st["ack"]["payload"]) if st["ack"] else None))
         specs.append("# image streams, first frames " + "; ".join(
