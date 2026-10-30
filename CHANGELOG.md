@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.7.5 (2026-10-30)
 Raw pixel streams to a screen.
 - raw image streams: RGB565 and RGB888 pixels with no image file format are found by size. Runs of
   large host->device packets with no pause between them whose payload is a common screen size
