@@ -1,6 +1,7 @@
 # Changelog
 
-## Unreleased
+## v0.7.6 (2026-10-31)
+A real user's LCD capture as a test, and two fixes it found.
 - USBPcap: control IN data that arrives in the "complete" record (stage 3) is read, so VID:PID is
   found in captures where the GET_DESCRIPTOR reply was missed before.
 - tests: a trimmed, blanked copy of a real ASUS TUF Gaming LC III LCD capture (shared in
