@@ -5,6 +5,10 @@
   found in captures where the GET_DESCRIPTOR reply was missed before.
 - tests: a trimmed, blanked copy of a real ASUS TUF Gaming LC III LCD capture (shared in
   liquidctl#936) checks the brightness command and the JPEG stream end to end.
+- image streams: the per-frame ack is counted per frame (a fixed device->host message between one
+  frame's start and the next) instead of over the whole capture, so bursts of acks while no frames
+  go out no longer hide it, and the acks are no longer mistaken for replies to a command. `ack`
+  gains `frames_acked`.
 
 ## v0.7.5 (2026-10-30)
 Raw pixel streams to a screen.

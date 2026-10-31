@@ -36,3 +36,13 @@ def test_brightness_command_and_jpeg_stream(tmp_path):
     (c,) = d["commands"]
     assert c["endpoint"] == 1 and c["length"] == 440
     assert any(f["offset"] == 4 and f["kind"] == "value" for f in c["fields"])
+
+
+def test_frame_ack_found_despite_trimmed_gaps(tmp_path):
+    # the trimmed copy keeps the device's acks for frames that were cut out, so acks come in
+    # bursts in the gaps; counted per frame, 08 81 on EP 0x84 is still the frame ack
+    d = analyze(capture(tmp_path), labels=["brightness 0", "brightness 50", "brightness 100"]).to_dict()
+    (s,) = d["streams"]
+    assert s["ack"]["endpoint"] == 0x84 and s["ack"]["payload"].startswith("08 81 00")
+    # and the acks are not taken for replies to the brightness command
+    assert d["responses"] == []

@@ -175,7 +175,7 @@ def find_streams(transfers: list[Transfer], min_frames: int = 3) -> list[dict]:
         s.update({k: nroles.get(k) for k in ("index_width", "index_endian")})
         s.update(raw=False, header_packet=None, region=None, length_field=None, byteorder=None,
                  size_alternatives=[], frame_bytes=None, regions=0)
-        _add_ack(s, transfers, key[0], len(frames), ids)
+        _add_ack(s, transfers, key[0], frames, ids)
         s["ids"] = ids
         found.append(s)
     taken = {(s["endpoint"], s["xfer_type"]) for s in found}
@@ -187,16 +187,31 @@ def find_streams(transfers: list[Transfer], min_frames: int = 3) -> list[dict]:
     return found
 
 
-def _add_ack(s: dict, transfers: list[Transfer], device: int, n_frames: int, ids: set) -> None:
-    """A fixed device->host message sent about once per frame on the same device is the frame ack."""
+def _add_ack(s: dict, transfers: list[Transfer], device: int, frames: list, ids: set) -> None:
+    """A fixed device->host message sent about once per frame on the same device is the frame ack.
+
+    Counted per frame, not over the whole capture: a message counts for a frame when it arrives
+    between the frame's start and the next frame (at most a second after the frame's last packet).
+    It is the ack when at least half the frames get one and most of those get exactly one, so a
+    burst of copies while no frames go out (a paused or trimmed stream) does not hide it.
+    """
     acks: dict[tuple, list[Transfer]] = {}
     for t in transfers:
         if t.is_in and t.data and t.device == device and t.xfer_type in (1, 3):
             acks.setdefault((t.endpoint, t.data), []).append(t)
-    fit = [(ep, d, g) for (ep, d), g in acks.items() if 0.5 * n_frames <= len(g) <= 1.2 * n_frames]
-    if fit:
-        ep, d, g = max(fit, key=lambda x: len(x[2]))
-        s["ack"] = {"endpoint": ep, "payload": d.hex(" "), "count": len(g), "frames": [t.frame for t in g[:5]]}
+    starts = [f[0].ts for f in frames]
+    windows = [(f[0].ts, min(nxt, f[-1].ts + 1.0)) for f, nxt in zip(frames, starts[1:] + [float("inf")])]
+    best = None
+    for (ep, d), g in acks.items():
+        per = [sum(a <= t.ts < b for t in g) for a, b in windows]
+        hit = sum(1 for n in per if n)
+        single = per.count(1)
+        if hit >= 0.5 * len(frames) and single >= 2 / 3 * hit and (best is None or hit > best[0]):
+            best = (hit, ep, d, g)
+    if best:
+        hit, ep, d, g = best
+        s["ack"] = {"endpoint": ep, "payload": d.hex(" "), "count": len(g), "frames_acked": hit,
+                    "frames": [t.frame for t in g[:5]]}
         ids |= {id(t) for t in g}
 
 
@@ -483,6 +498,6 @@ def _raw_stream(transfers: list[Transfer], key: tuple, pkts: list[Transfer], min
                 col = {d[j] for d in hd}
                 tokens[j] = f"{col.pop():02x}" if len(col) == 1 else "??"
         s["header_packet"] = " ".join(tokens)
-    _add_ack(s, transfers, key[0], len(frames), ids)
+    _add_ack(s, transfers, key[0], frames, ids)
     s["ids"] = ids
     return s
