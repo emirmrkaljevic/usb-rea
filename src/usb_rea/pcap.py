@@ -120,7 +120,7 @@ def parse_usbpcap(frame: int, ts: float, raw: bytes) -> Transfer | None:
             if setup and setup[0] & 0x80:
                 return Transfer(frame, ts, bus, dev, ep | 0x80, xtype, setup, b"")
             return Transfer(frame, ts, bus, dev, ep & 0x7F, xtype, setup, payload)
-        if stage == 1:  # data stage
+        if stage in (1, 3):  # data stage, or USBPcap's "complete" record with the IN data
             if is_in and completion and payload:
                 return Transfer(frame, ts, bus, dev, ep | 0x80, xtype, None, payload)
             return None

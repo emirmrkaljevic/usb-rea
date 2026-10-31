@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+- USBPcap: control IN data that arrives in the "complete" record (stage 3) is read, so VID:PID is
+  found in captures where the GET_DESCRIPTOR reply was missed before.
+- tests: a trimmed, blanked copy of a real ASUS TUF Gaming LC III LCD capture (shared in
+  liquidctl#936) checks the brightness command and the JPEG stream end to end.
+
 ## v0.7.5 (2026-10-30)
 Raw pixel streams to a screen.
 - raw image streams: RGB565 and RGB888 pixels with no image file format are found by size. Runs of
