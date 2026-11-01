@@ -96,8 +96,23 @@ def _streams(proto: Protocol) -> list[str]:
                          f" (the same byte count fits {', '.join(s['size_alternatives'])}; check on the device)"
                          if s.get("size_alternatives") else ""))
             if s["format"] == "rgb565":
-                L.append("- Pixel byte order: " + (f"{s['byteorder']}-endian (neighbouring pixels are smooth that way)"
+                why = ("the test card frames only read right that way" if s.get("channel_order")
+                       and (s.get("channel_evidence") or {}).get("byteorder") else "neighbouring pixels are smooth that way")
+                L.append("- Pixel byte order: " + (f"{s['byteorder']}-endian ({why})"
                                                    if s.get("byteorder") else "not clear from the pixels; try little-endian first"))
+            ev = s.get("channel_evidence")
+            if s.get("channel_order"):
+                L.append(f"- Channel order: {s['channel_order'].upper()} (the usb-rea test card shows in "
+                         f"{ev['frames_matched']} of {ev['frames_checked']} full frames checked, read as {s['channel_order'].upper()}"
+                         + (f" {ev['byteorder']}-endian" if ev.get("byteorder") else "")
+                         + f" in {ev['agree']} of them, confidence {ev['confidence']:.0%}, first frames "
+                         f"{', '.join(map(str, ev['frames']))}); send_image() converts to it")
+            else:
+                L.append("- Channel order: unknown" + (
+                    f" (test card frames disagree: {ev['agree']} of {ev['frames_matched']} one way, confidence "
+                    f"{ev['confidence']:.0%})" if ev else " (pixels alone do not tell RGB from BGR)")
+                    + "; send_image() assumes RGB. To settle it, show the picture from `usb-rea testcard` "
+                    "on the screen for a few seconds while capturing")
             if s.get("region"):
                 rg = s["region"]
                 what = {"xywh": "x, y, width, height as 16-bit", "box": "x0, y0, x1, y1 (inclusive) as 16-bit",

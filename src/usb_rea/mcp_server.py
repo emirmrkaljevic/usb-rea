@@ -98,8 +98,9 @@ def build():
         found by size with `raw` true): endpoint, format, frame and packet counts, chunk size, per-packet
         header (`nn` packet count, `ii` index, 8 or 16 bit), image size, frame rate, the device's
         per-frame `ack` and for raw streams `header_packet` (the command before each frame), `region`
-        (x/y/width/height fields), `byteorder` and `size_alternatives`; those packets are kept out of
-        the commands.
+        (x/y/width/height fields), `byteorder`, `size_alternatives` and `channel_order` ('rgb' or 'bgr',
+        null = unknown; only settled by frames showing the `usb-rea testcard` picture, see
+        `channel_evidence`); those packets are kept out of the commands.
 
         Read-only analysis: does not write files or talk to hardware. Requires either markers from
         mark_action or `labels` for a finished capture with pauses between clicks. Prefer report

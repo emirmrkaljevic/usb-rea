@@ -207,6 +207,17 @@ def gradient(w: int, h: int, n: int = 0, bpp: int = 2, order: str = "little") ->
     return bytes(out)
 
 
+def encode_testcard(w: int, h: int, bpp: int, order: str = "rgb", endian: str = "little") -> bytes:
+    """The usb-rea test card as a screen with this channel order would take it (RGB565 or RGB888)."""
+    from .streams import testcard as card
+    rgb = card(w, h)
+    out = bytearray()
+    for i in range(0, len(rgb), 3):
+        r, g, b = rgb[i:i + 3] if order == "rgb" else rgb[i:i + 3][::-1]
+        out += bytes((r, g, b)) if bpp == 3 else ((r >> 3) << 11 | (g >> 2) << 5 | b >> 3).to_bytes(2, endian)
+    return bytes(out)
+
+
 def raw_header(x: int, y: int, w: int, h: int) -> bytes:
     """Synthetic raw LCD 'draw' command: 55 AA 02 00, then x, y, width, height as u16 LE."""
     return b"\x55\xaa\x02\x00" + b"".join(v.to_bytes(2, "little") for v in (x, y, w, h))
@@ -245,7 +256,7 @@ def make_capture(path, actions: list[str] | None = None, transport: str = "bulk"
                  poll: float = 0.0, poll_seq: bool = False, observe: bool = False,
                  handshake: bool = False, reopen: bool = False, branch: bool = False,
                  states: bool = False, image_stream: bool = False, fps: float = 20.0,
-                 raw: str | None = None) -> tuple[Path, Path]:
+                 raw: str | None = None, testcard: str | None = None) -> tuple[Path, Path]:
     """Write <path> (pcap) and <path>.actions.json. Returns both paths.
 
     poll: if > 0, the "vendor app" also sends a status request every `poll` seconds on the
@@ -272,6 +283,8 @@ def make_capture(path, actions: list[str] | None = None, transport: str = "bulk"
     image_stream: (lcd) the vendor app streams a JPEG video to the screen at `fps` frames per second
     for the whole capture (frames of 1.5 to 4 KB, so 3 to 8 packets each, the first one cut off by
     the start of the capture), with an ack from the device after each frame.
+    testcard: (raw streams) 'rgb' or 'bgr': frames 4 to 11 (but not the clock redraws) show the
+    usb-rea test card encoded in that channel order, as when the user put it on the screen.
     raw: (lcd with image_stream) stream raw pixels instead of JPEG on bulk EP 0x02. 'rgb565': a
     160x128 screen at 10 fps, each frame a 12-byte draw command (55 AA 02 00, x, y, width, height as
     u16 LE) then RGB565 LE pixels in 512-byte packets; every 4th frame only redraws a 48x16 clock at
@@ -289,6 +302,8 @@ def make_capture(path, actions: list[str] | None = None, transport: str = "bulk"
         raise ValueError("only the synthetic lcd streams images")
     if raw not in (None, "rgb565", "rgb888") or (raw and not image_stream):
         raise ValueError("raw is 'rgb565' or 'rgb888' and needs image_stream=True")
+    if testcard not in (None, "rgb", "bgr") or (testcard and not raw):
+        raise ValueError("testcard is 'rgb' or 'bgr' and needs a raw stream")
     if device == "fan":
         actions = actions or (FAN_STATE_ACTIONS if states else FAN_ACTIONS)
     elif device == "dial":
@@ -398,12 +413,13 @@ def make_capture(path, actions: list[str] | None = None, transport: str = "bulk"
         tf, n = 1_760_000_000.0 + 0.02, 0
         fps = 10.0 if raw == "rgb565" else 5.0
         while tf < t:
+            card = testcard and 4 <= n < 12 and n % 4 != 3   # the user showed the test card for a while
             if raw == "rgb565":
                 x, y, wd, ht = (100, 8, 48, 16) if n % 4 == 3 else (0, 0, 160, 128)
-                pix = gradient(wd, ht, n)
+                pix = encode_testcard(160, 128, 2, testcard) if card else gradient(wd, ht, n)
                 pkts = [raw_header(x, y, wd, ht)] + [pix[i:i + 512] for i in range(0, len(pix), 512)]
             else:
-                pkts = raw888_packets(gradient(128, 160, n, bpp=3))
+                pkts = raw888_packets(encode_testcard(128, 160, 3, testcard) if card else gradient(128, 160, n, bpp=3))
             if n == 0:
                 pkts = pkts[3:]   # the capture started in the middle of a frame
             step = 0.0004 if raw == "rgb565" else 0.0001

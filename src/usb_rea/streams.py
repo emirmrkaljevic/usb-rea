@@ -174,7 +174,7 @@ def find_streams(transfers: list[Transfer], min_frames: int = 3) -> list[dict]:
         s.update({k: froles.get(k, nroles.get(k)) for k in ("count_width", "count_endian")})
         s.update({k: nroles.get(k) for k in ("index_width", "index_endian")})
         s.update(raw=False, header_packet=None, region=None, length_field=None, byteorder=None,
-                 size_alternatives=[], frame_bytes=None, regions=0)
+                 size_alternatives=[], frame_bytes=None, regions=0, channel_order=None, channel_evidence=None)
         _add_ack(s, transfers, key[0], frames, ids)
         s["ids"] = ids
         found.append(s)
@@ -230,6 +230,8 @@ def describe(s: dict) -> str:
         hdr += f", each frame after a command `{s['header_packet']}`"
     part = f" ({s['regions']} redraw part of the screen)" if s.get("regions") else ""
     order = f" {s['byteorder']}-endian" if s.get("byteorder") else ""
+    if s.get("channel_order"):
+        order += f" {s['channel_order'].upper()}"
     kind = f"raw {s['format']}{order}" if s.get("raw") else s["format"]
     return (f"{kind} stream on {XFER_NAMES.get(s['xfer_type'])} EP 0x{s['endpoint']:02x}:{size} "
             f"{s['frames']} frames{part} in {s['packets']} packets of {s['chunk']} bytes{hdr}{ack}")
@@ -469,6 +471,7 @@ def _raw_stream(transfers: list[Transfer], key: tuple, pkts: list[Transfer], min
          "first_frames": [f[0].frame for f in frames[:5]], "ack": None, "raw": True,
          "byteorder": _rgb565_order(pix) if fmt == "rgb565" else None,
          "header_packet": None, "region": None, "length_field": None}
+    s.update(_channel_order(full_frames, h, fmt, frame_bytes, s["byteorder"]))
     if heads_used:
         hd = [t.data for t in heads_used]
         hl = len(hd[0])
@@ -501,3 +504,114 @@ def _raw_stream(transfers: list[Transfer], key: tuple, pkts: list[Transfer], min
     _add_ack(s, transfers, key[0], frames, ids)
     s["ids"] = ids
     return s
+
+
+# ---- channel order (RGB or BGR) from the usb-rea test card ----
+#
+# Pixels alone do not say whether the first channel is red or blue: a photo with red and blue
+# swapped is still a smooth photo. So the order is only claimed when a frame shows a known picture,
+# the usb-rea test card (`usb-rea testcard`): left half red, top right quarter green, then a blue
+# and a white eighth. Its colour shares (1/2 red, 1/4 green, 1/8 blue, 1/8 white) do not change
+# when the vendor app scales, rotates or mirrors the picture, and they only come out right for one
+# reading of the pixels (RGB or BGR, and for RGB565 also little or big endian). Without such a
+# frame the order stays unknown.
+
+TESTCARD_SHARES = {"r": 0.5, "g": 0.25, "b": 0.125, "w": 0.125}
+TESTCARD_COLORS = {"r": (255, 0, 0), "g": (0, 255, 0), "b": (0, 0, 255), "w": (255, 255, 255)}
+_LO, _HI = 55, 200   # a channel this dark or this bright counts as off or on
+
+
+def testcard(w: int, h: int) -> bytes:
+    """The test card as RGB888 pixels, row by row."""
+    out = bytearray()
+    for y in range(h):
+        for x in range(w):
+            c = "r" if x < w // 2 else "g" if y < h // 2 else "b" if x < w * 3 // 4 else "w"
+            out += bytes(TESTCARD_COLORS[c])
+    return bytes(out)
+
+
+def write_testcard(path, w: int = 320, h: int = 240) -> None:
+    """Save the test card as a PNG (no Pillow needed) to show on the screen while capturing."""
+    import struct
+    import zlib
+    pix = testcard(w, h)
+    rows = b"".join(b"\x00" + pix[y * w * 3:(y + 1) * w * 3] for y in range(h))
+
+    def chunk(kind, data):
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+    png = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+           + chunk(b"IDAT", zlib.compress(rows, 9)) + chunk(b"IEND", b""))
+    with open(path, "wb") as f:
+        f.write(png)
+
+
+def _readings(fmt: str) -> list[tuple[str, str | None]]:
+    return [(o, e) for o in ("rgb", "bgr") for e in ((None,) if fmt == "rgb888" else ("little", "big"))]
+
+
+def _pixel(fmt: str, px: bytes, order: str, endian: str | None) -> tuple[int, int, int]:
+    if fmt == "rgb888":
+        a, g, c = px[0], px[1], px[2]
+    else:
+        v = int.from_bytes(px, endian)
+        a, g, c = (v >> 11) * 255 // 31, ((v >> 5) & 63) * 255 // 63, (v & 31) * 255 // 31
+    return (a, g, c) if order == "rgb" else (c, g, a)
+
+
+def _color(p: tuple[int, int, int]) -> str | None:
+    if all(v >= _HI for v in p):
+        return "w"
+    on = [v >= _HI for v in p]
+    if sum(on) == 1 and all(v <= _LO for v, o in zip(p, on) if not o):
+        return "rgb"[on.index(True)]
+    return None
+
+
+def _is_testcard(fmt: str, pix: bytes, order: str, endian: str | None, n: int) -> bool:
+    bpp = RAW[fmt]
+    total = len(pix) // bpp
+    if total < 16:
+        return False
+    # spread the samples with the golden ratio: a plain stride can land on the same column every row
+    got = Counter(_color(_pixel(fmt, pix[i * bpp:(i + 1) * bpp], order, endian))
+                  for i in (int(total * (k * 0.6180339887 % 1)) for k in range(n)))
+    if sum(v for k, v in got.items() if k) < 0.85 * n:
+        return False
+    return all(abs(got[c] / n - share) <= (0.1 if share > 0.2 else 0.06) for c, share in TESTCARD_SHARES.items())
+
+
+def _channel_order(frames: list[list[Transfer]], h: int, fmt: str, frame_bytes: int,
+                   byteorder: str | None, max_frames: int = 600) -> dict:
+    """`channel_order` ('rgb', 'bgr' or None for unknown) and the evidence: full frames that show
+    the test card under exactly one reading of the pixels. For RGB565 the test card also settles the
+    byte order (`byteorder` is replaced when the pixel smoothness guess disagreed). Confidence is
+    the share of matching frames that agree; below 0.9 the order stays unknown."""
+    hits: Counter = Counter()
+    seen: dict[tuple, list[int]] = {}
+    checked = 0
+    # a long video is checked at an even stride (a card shown for a few seconds is still hit)
+    for f in frames[::max(1, -(-len(frames) // max_frames))]:
+        pix = b"".join(t.data[h:] for t in f)[:frame_bytes]
+        checked += 1
+        # a quick look at a few pixels first, the full sample only for likely frames
+        quick = [r for r in _readings(fmt) if _is_testcard(fmt, pix, *r, 64)]
+        match = [r for r in quick if _is_testcard(fmt, pix, *r, 2048)]
+        if len(match) == 1:
+            hits[match[0]] += 1
+            seen.setdefault(match[0], []).append(f[0].frame)
+    out = {"channel_order": None, "channel_evidence": None}
+    if not hits:
+        return out
+    (order, endian), n = hits.most_common(1)[0]
+    matched = sum(hits.values())
+    conf = round(n / matched, 2)
+    out["channel_evidence"] = {"method": "testcard", "frames_checked": checked, "frames_matched": matched,
+                               "agree": n, "confidence": conf, "frames": seen[(order, endian)][:5],
+                               "byteorder": endian}
+    if conf >= 0.9:
+        out["channel_order"] = order
+        if endian:
+            out["byteorder"] = endian
+            out["channel_evidence"]["byteorder_was"] = byteorder
+    return out

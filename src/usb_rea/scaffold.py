@@ -245,8 +245,8 @@ SEND_IMAGE = '''
         Encoded stream (STREAMS format jpeg, png or gif): pass the image file bytes at the captured
         size; they are cut into chunks behind the captured per-packet header (count and index filled
         in), the last chunk padded if the app padded it.
-        Raw stream (rgb565, rgb888): pass a Pillow image (converted to the stream's pixel format and
-        byte order) or bytes already in that format. When the app's command before each frame names
+        Raw stream (rgb565, rgb888): pass a Pillow image (converted to the stream's pixel format, byte
+        order and channel order; RGB when the capture did not show which) or bytes already in that format. When the app's command before each frame names
         a screen region, a smaller picture can be drawn at (x, y); give `size=(w, h)` with raw bytes.
         """
         st = STREAMS[stream]
@@ -291,6 +291,10 @@ SEND_IMAGE = '''
         if hasattr(image, "convert") and hasattr(image, "size"):   # a Pillow image
             w, h = image.size
             rgb = image.convert("RGB").tobytes()
+            if st.get("channel_order") == "bgr":   # the screen takes blue first
+                swapped = bytearray(rgb)
+                swapped[0::3], swapped[2::3] = rgb[2::3], rgb[0::3]
+                rgb = bytes(swapped)
             if bpp == 3:
                 return rgb, w, h
             order = st["byteorder"] or "little"
@@ -506,6 +510,7 @@ def generate(proto: Protocol) -> str:
                                 index=st["index_offset"], index_base=st["index_base"] or 0,
                                 index_width=st.get("index_width"), index_endian=st.get("index_endian"),
                                 raw=bool(st.get("raw")), size=st["size"], byteorder=st.get("byteorder"),
+                                channel_order=st.get("channel_order"),
                                 header_packet=tpl(st["header_packet"]) if st.get("header_packet") else None,
                                 region=st.get("region"), length_field=st.get("length_field"),
                                 ack=dict(endpoint=st["ack"]["endpoint"], length=len(st["ack"]["payload"].split()),

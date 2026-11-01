@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+- raw image streams: RGB or BGR channel order. Pixels alone can't tell red from blue, so it is
+  settled by frames that show the new test card (`usb-rea testcard`, a PNG that is 1/2 red, 1/4
+  green, 1/8 blue, 1/8 white; the shares survive scaling, rotation and mirroring). Only one reading
+  of the pixels (RGB or BGR, and for RGB565 little or big endian) gets them right. `streams` gains
+  `channel_order` (`rgb`, `bgr` or null for unknown) and `channel_evidence` (frames checked and
+  matched, agreement, confidence); below 90% agreement it stays unknown. A test card also settles
+  the RGB565 byte order. The report has a "Channel order" line, and `send_image()` swaps red and
+  blue for a BGR screen (RGB when unknown).
+- synth: `make_capture(..., raw=..., testcard="rgb"|"bgr")` shows the test card in a few frames;
+  `usb-rea demo --device lcd --raw rgb565 --testcard bgr`.
+
 ## v0.7.6 (2026-10-31)
 A real user's LCD capture as a test, and two fixes it found.
 - USBPcap: control IN data that arrives in the "complete" record (stage 3) is read, so VID:PID is

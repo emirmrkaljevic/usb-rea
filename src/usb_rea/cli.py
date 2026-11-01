@@ -51,6 +51,13 @@ def main(argv=None) -> int:
     d.add_argument("--device", choices=["lamp", "fan", "dial", "lcd"], default="lamp")
     d.add_argument("--raw", choices=["rgb565", "rgb888"], default=None,
                    help="lcd only: stream raw pixels instead of a JPEG video")
+    d.add_argument("--testcard", choices=["rgb", "bgr"], default=None,
+                   help="with --raw: the screen shows the test card for a while, in this channel order")
+
+    tc = sub.add_parser("testcard", help="write the test card picture; show it on the screen while "
+                        "capturing so the report can tell RGB from BGR")
+    tc.add_argument("-o", "--out", default="usb-rea-testcard.png")
+    tc.add_argument("--size", default="320x240", help="WIDTHxHEIGHT, best the screen's own size")
 
     r = sub.add_parser("replay", help="send one packet to a real device (requires --yes)")
     r.add_argument("vid", type=_int)
@@ -95,7 +102,20 @@ def main(argv=None) -> int:
     if a.cmd == "demo":
         if a.raw and a.device != "lcd":
             p.error("--raw needs --device lcd")
-        return _demo(Path(a.outdir), a.device, a.raw)
+        if a.testcard and not a.raw:
+            p.error("--testcard needs --raw")
+        return _demo(Path(a.outdir), a.device, a.raw, a.testcard)
+    if a.cmd == "testcard":
+        from .streams import write_testcard
+        try:
+            w, h = (int(v) for v in a.size.lower().split("x"))
+        except ValueError:
+            p.error("--size is WIDTHxHEIGHT, e.g. 320x240")
+        if not (8 <= w <= 4096 and 8 <= h <= 4096):
+            p.error("--size must be 8 to 4096 pixels each way")
+        write_testcard(a.out, w, h)
+        print(f"wrote {a.out} ({w}x{h}): show it on the screen for a few seconds while capturing")
+        return 0
     if a.cmd == "transfers":
         from .pcap import read_transfers
         for t in read_transfers(a.capture):
@@ -160,7 +180,7 @@ def _hid(a) -> int:
     return 0
 
 
-def _demo(outdir: Path, device: str = "lamp", raw: str | None = None) -> int:
+def _demo(outdir: Path, device: str = "lamp", raw: str | None = None, testcard: str | None = None) -> int:
     from .synth import make_capture
     from .pipeline import analyze, sha256
     from .report import render
@@ -175,7 +195,8 @@ def _demo(outdir: Path, device: str = "lamp", raw: str | None = None) -> int:
     # (with --raw it sends raw pixels instead, behind a draw command that names the screen region)
     cap, _ = make_capture(outdir / f"{device}.pcap", device=device, poll=0.5 if device == "fan" else 0.0,
                           observe=device == "fan", handshake=device == "fan", branch=device == "fan",
-                          states=device == "fan", image_stream=device == "lcd", raw=raw)
+                          states=device == "fan", image_stream=device == "lcd", raw=raw,
+                          testcard=testcard)
     proto = analyze(cap)
     (outdir / "report.md").write_text(render(proto, str(cap), sha256(cap)))
     (outdir / f"{device}_driver.py").write_text(generate(proto))
