@@ -1,6 +1,9 @@
 # Changelog
 
 ## Unreleased
+
+## v0.7.7 (2026-11-01)
+RGB or BGR on raw screen streams, settled with a test card.
 - raw image streams: RGB or BGR channel order. Pixels alone can't tell red from blue, so it is
   settled by frames that show the new test card (`usb-rea testcard`, a PNG that is 1/2 red, 1/4
   green, 1/8 blue, 1/8 white; the shares survive scaling, rotation and mirroring). Only one reading
