@@ -1,6 +1,9 @@
 # Changelog
 
 ## Unreleased
+
+## v0.7.8 (2026-11-02)
+Image streams whose frames span several endpoints.
 - image streams over several endpoints: for a device with more than one host->device channel the
   channels are also merged by time, so frames whose packets alternate between two endpoints, go to
   one endpoint and then another, or whose draw command goes to the command endpoint are found as one
