@@ -286,7 +286,20 @@ and mirroring, and only one reading of the pixels gets them right, so the report
 and `send_image()` converts a Pillow image to that order. Without the card it says "unknown" and
 the driver assumes RGB. Try it with `usb-rea demo --device lcd --raw rgb565 --testcard bgr`.
 
-Limits: images split over several endpoints are not detected yet. A raw stream needs at least 3
+Some screens take a frame over more than one host→device endpoint: the packets alternate between
+two bulk endpoints, the first part of the frame goes to one endpoint and the rest to another, or the
+draw command goes to the command endpoint (next to brightness) and only the pixels to the data
+endpoint. One endpoint at a time that looks like broken frames, a JPEG with no end marker or two
+smaller screens. So for a device with several host→device channels usb-rea also merges them by time
+and searches again, and keeps the merged stream when most of its frames really use more than one
+endpoint and it explains as many whole frames and packets as the per-endpoint guesses. Two screens on
+two endpoints with their own frame rates stay two streams. `streams` gets `endpoints` (in the order
+the frame uses them), `endpoint_layout` (`alternate` or `blocks`) and `header_endpoint`, the report
+says where each part goes, and `send_image()` writes the packets and the draw command to the same
+endpoints. Try `usb-rea demo --device lcd --endpoints alternate` (or `--raw rgb565 --endpoints command`).
+
+Limits: a frame is only merged over data endpoints that mostly use the same packet size, with the
+same per-packet header on each, and at most 4 data endpoints of one device are tried. A raw stream needs at least 3
 frames whose payload is a listed screen size or matches the region fields; a screen size not in the
 list without a region command is missed, and the same byte count can fit several sizes (320x480
 RGB565 is also 480x320, and 320x320 RGB888), which the report lists so you can check on the device.
@@ -368,7 +381,7 @@ usb-rea hid capture.pcapng --decode "10ff0d1d000000" --type Output
 - [x] image streams: JPEG/PNG/GIF frames sent to a screen are kept apart from the commands, `send_image()` in the driver
 - [x] raw pixel streams (RGB565/RGB888 without an image header) and 16-bit header fields
 - [x] RGB or BGR channel order (and RGB565 byte order) from frames showing the `usb-rea testcard` picture
-- [ ] image streams split over several endpoints
+- [x] image streams split over several endpoints (alternating, in blocks, or a draw command on the command endpoint)
 
 ## Legal
 Reverse engineering for interoperability is permitted (EU Directive 2009/24/EC Art. 6, US DMCA §1201(f)). usb-rea only analyzes traffic of devices you own and never redistributes vendor code.

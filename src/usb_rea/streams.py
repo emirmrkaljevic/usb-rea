@@ -106,85 +106,203 @@ def _header(frames: list[list[Transfer]], h: int, first: bool) -> tuple[str, dic
     return " ".join(out), roles
 
 
-def find_streams(transfers: list[Transfer], min_frames: int = 3) -> list[dict]:
-    """Image streams in the capture; each dict has the stream's description plus `ids` (its packets
-    and acks, to leave out of everything else)."""
+def _channels(transfers: list[Transfer]) -> dict[tuple, list[Transfer]]:
     chans: dict[tuple, list[Transfer]] = {}
     for t in sorted(transfers, key=lambda t: t.ts):
         if t.is_out and t.data and t.xfer_type in (1, 3):
             chans.setdefault(t.key(), []).append(t)
-    found = []
+    return chans
+
+
+def find_streams(transfers: list[Transfer], min_frames: int = 3) -> list[dict]:
+    """Image streams in the capture; each dict has the stream's description plus `ids` (its packets
+    and acks, to leave out of everything else). A stream whose frames span several host->device
+    endpoints of one device (see _multi_endpoint) replaces the per-endpoint guesses it explains."""
+    chans = _channels(transfers)
+    singles: dict[tuple, dict] = {}
     for key, pkts in chans.items():
-        best = None
-        for fmt, magic in MAGIC.items():
-            offs = Counter(t.data.find(magic) for t in pkts)
-            offs.pop(-1, None)
-            offs = Counter({o: n for o, n in offs.items() if o <= MAX_HEADER})
-            if offs:
-                h, n = offs.most_common(1)[0]
-                if n >= min_frames and (best is None or n > best[2]):
-                    best = (fmt, h, n)
-        if best is None:
-            continue
-        fmt, h, _ = best
-        magic = MAGIC[fmt]
-        starts = [i for i, t in enumerate(pkts) if t.data[h:h + len(magic)] == magic]
-        frames, sizes, dims = [], [], Counter()
-        for si, s in enumerate(starts):
-            stop = starts[si + 1] if si + 1 < len(starts) else len(pkts)
-            members, buf = [pkts[s]], pkts[s].data[h:]
-            n_img = _ended(fmt, buf)
-            k = s + 1
-            while n_img is None and k < stop and pkts[k].ts - pkts[k - 1].ts < 1.0:
-                members.append(pkts[k])
-                buf += pkts[k].data[h:]
-                n_img = _ended(fmt, buf)
-                k += 1
-            frames.append(members)
-            if n_img is not None:
-                sizes.append(n_img)
-            if len(dims) < 50:
-                d = _size(fmt, buf)
-                if d:
-                    dims[d] += 1
-        ids = {id(t) for f in frames for t in f}
-        lens = Counter(len(t.data) for f in frames for t in f)
-        chunk = lens.most_common(1)[0][0]
-        padded = lens[chunk] >= 0.95 * len(ids)
-        first, froles = _header(frames, h, True)
-        nxt, nroles = _header([f for f in frames if len(f) > 1], h, False)
-        # chunks of a frame cut off by the start or a pause of the capture: same size, same fixed
-        # header bytes as the packets that follow a frame's first one
-        fixed = [(j, int(b, 16)) for j, b in enumerate(nxt.split()) if b not in ("nn", "ii", "??")]
-        orphans = [t for t in pkts if id(t) not in ids and len(t.data) == chunk and h and nxt
-                   and all(t.data[j] == v for j, v in fixed)]
-        ids |= {id(t) for t in orphans}
-        span = frames[-1][0].ts - frames[0][0].ts
-        s = {"endpoint": key[1], "xfer_type": key[2], "format": fmt, "frames": len(frames),
-             "packets": len(ids), "partial": len(orphans), "chunk": chunk, "padded": padded,
-             "header_len": h, "first_header": first, "next_header": nxt,
-             "count_offset": froles.get("count", nroles.get("count")),
-             "index_offset": nroles.get("index"), "index_base": nroles.get("index_base"),
-             "count_in_next": "count" in nroles,
-             "packets_per_frame": [min(map(len, frames)), max(map(len, frames))],
-             "image_bytes": [min(sizes), max(sizes)] if sizes else None,
-             "size": list(dims.most_common(1)[0][0]) if dims else None,
-             "fps": round((len(frames) - 1) / span, 1) if span > 0 else None,
-             "first_frames": [f[0].frame for f in frames[:5]], "ack": None}
-        s.update({k: froles.get(k, nroles.get(k)) for k in ("count_width", "count_endian")})
-        s.update({k: nroles.get(k) for k in ("index_width", "index_endian")})
-        s.update(raw=False, header_packet=None, region=None, length_field=None, byteorder=None,
-                 size_alternatives=[], frame_bytes=None, regions=0, channel_order=None, channel_evidence=None)
-        _add_ack(s, transfers, key[0], frames, ids)
-        s["ids"] = ids
-        found.append(s)
-    taken = {(s["endpoint"], s["xfer_type"]) for s in found}
-    for key, pkts in chans.items():
-        if (key[1], key[2]) not in taken:
-            r = _raw_stream(transfers, key, pkts, min_frames)
-            if r:
-                found.append(r)
+        s = _encoded_stream(transfers, key, pkts, min_frames) or _raw_stream(transfers, key, pkts, min_frames)
+        if s:
+            singles[key] = s
+    found = list(singles.values())
+    for m, keys in _multi_endpoint(transfers, chans, singles, min_frames):
+        gone = [singles[k] for k in keys if k in singles]
+        at = min((found.index(g) for g in gone), default=len(found))
+        found = [s for s in found if all(s is not g for g in gone)]
+        found.insert(min(at, len(found)), m)
+    for s in found:
+        _finish(s)
     return found
+
+
+def _encoded_stream(transfers: list[Transfer], key: tuple, pkts: list[Transfer], min_frames: int) -> dict | None:
+    """A JPEG/PNG/GIF stream on these packets (one channel, or several merged by time), or None."""
+    best = None
+    for fmt, magic in MAGIC.items():
+        offs = Counter(t.data.find(magic) for t in pkts)
+        offs.pop(-1, None)
+        offs = Counter({o: n for o, n in offs.items() if o <= MAX_HEADER})
+        if offs:
+            h, n = offs.most_common(1)[0]
+            if n >= min_frames and (best is None or n > best[2]):
+                best = (fmt, h, n)
+    if best is None:
+        return None
+    fmt, h, _ = best
+    magic = MAGIC[fmt]
+    starts = [i for i, t in enumerate(pkts) if t.data[h:h + len(magic)] == magic]
+    frames, sizes, dims = [], [], Counter()
+    for si, s in enumerate(starts):
+        stop = starts[si + 1] if si + 1 < len(starts) else len(pkts)
+        members, buf = [pkts[s]], pkts[s].data[h:]
+        n_img = _ended(fmt, buf)
+        k = s + 1
+        while n_img is None and k < stop and pkts[k].ts - pkts[k - 1].ts < 1.0:
+            members.append(pkts[k])
+            buf += pkts[k].data[h:]
+            n_img = _ended(fmt, buf)
+            k += 1
+        frames.append(members)
+        if n_img is not None:
+            sizes.append(n_img)
+        if len(dims) < 50:
+            d = _size(fmt, buf)
+            if d:
+                dims[d] += 1
+    ids = {id(t) for f in frames for t in f}
+    lens = Counter(len(t.data) for f in frames for t in f)
+    chunk = lens.most_common(1)[0][0]
+    padded = lens[chunk] >= 0.95 * len(ids)
+    first, froles = _header(frames, h, True)
+    nxt, nroles = _header([f for f in frames if len(f) > 1], h, False)
+    # chunks of a frame cut off by the start or a pause of the capture: same size, same fixed
+    # header bytes as the packets that follow a frame's first one
+    fixed = [(j, int(b, 16)) for j, b in enumerate(nxt.split()) if b not in ("nn", "ii", "??")]
+    orphans = [t for t in pkts if id(t) not in ids and len(t.data) == chunk and h and nxt
+               and all(t.data[j] == v for j, v in fixed)]
+    ids |= {id(t) for t in orphans}
+    span = frames[-1][0].ts - frames[0][0].ts
+    s = {"endpoint": key[1], "xfer_type": key[2], "format": fmt, "frames": len(frames),
+         "packets": len(ids), "partial": len(orphans), "chunk": chunk, "padded": padded,
+         "header_len": h, "first_header": first, "next_header": nxt,
+         "count_offset": froles.get("count", nroles.get("count")),
+         "index_offset": nroles.get("index"), "index_base": nroles.get("index_base"),
+         "count_in_next": "count" in nroles,
+         "packets_per_frame": [min(map(len, frames)), max(map(len, frames))],
+         "image_bytes": [min(sizes), max(sizes)] if sizes else None,
+         "size": list(dims.most_common(1)[0][0]) if dims else None,
+         "fps": round((len(frames) - 1) / span, 1) if span > 0 else None,
+         "first_frames": [f[0].frame for f in frames[:5]], "ack": None}
+    s.update({k: froles.get(k, nroles.get(k)) for k in ("count_width", "count_endian")})
+    s.update({k: nroles.get(k) for k in ("index_width", "index_endian")})
+    s.update(raw=False, header_packet=None, region=None, length_field=None, byteorder=None,
+             size_alternatives=[], frame_bytes=None, regions=0, channel_order=None, channel_evidence=None)
+    _add_ack(s, transfers, key[0], frames, ids)
+    s["ids"] = ids
+    s.update(_frames=frames, _heads=[], _complete=len(sizes))
+    return s
+
+
+# ---- streams over several endpoints ----
+#
+# Some screens take a frame over more than one host->device endpoint: the packets alternate
+# between two bulk endpoints, the first part of the frame goes to one endpoint and the rest to
+# another, or a draw command goes to the command endpoint and the pixels to a data endpoint. Seen
+# one endpoint at a time such a stream is missed or cut into broken frames. So for every device
+# with more than one host->device channel the channels are also merged by time and searched again.
+# A merged stream is kept only when most of its frames really use more than one endpoint (so two
+# screens on two endpoints stay two streams) and it explains as many whole frames (give or take a
+# frame cut by each end of the capture) and at least as many packets as the streams found on its
+# endpoints one by one.
+
+MAX_MERGE = 4   # data channels of one device tried together
+
+
+def _uses_several(s: dict) -> bool:
+    frames, heads = s["_frames"], s["_heads"]
+    if not frames:
+        return False
+    spans = sum(1 for f in frames if len({t.endpoint for t in f}) > 1)
+    data_eps = {t.endpoint for f in frames for t in f}
+    cmd = sum(1 for h in heads if h.endpoint not in data_eps)
+    return spans >= 0.5 * len(frames) or cmd >= 0.5 * len(frames)
+
+
+def _multi_endpoint(transfers: list[Transfer], chans: dict, singles: dict, min_frames: int) -> list[tuple[dict, tuple]]:
+    """Streams whose frames span several endpoints, each with the channel keys it replaces."""
+    from itertools import combinations
+    by_dev: dict[int, list[tuple]] = {}
+    for key in chans:
+        by_dev.setdefault(key[0], []).append(key)
+    out = []
+    for dev, keys in by_dev.items():
+        if len(keys) < 2:
+            continue
+        data = [k for k in keys if sum(len(t.data) > MAX_HEADER_PKT for t in chans[k]) >= 0.5 * len(chans[k])]
+        data = sorted(data, key=lambda k: -len(chans[k]))[:MAX_MERGE]
+        cmd = tuple(k for k in keys if k not in data)
+        # the packet size each data channel mostly uses; a frame is only looked for over channels
+        # that share it (a command channel of 64-byte reports next to 1024-byte image chunks is not one)
+        chunk = {k: Counter(len(t.data) for t in chans[k]).most_common(1)[0][0] for k in data}
+        cands = []
+        for n in range(len(data), 0, -1):
+            for sub in combinations(data, n):
+                encoded = any(not singles[k]["raw"] for k in sub if k in singles)
+                tries = []
+                if n >= 2 and len({chunk[k] for k in sub}) == 1:
+                    tries.append((sub, True))
+                if cmd and not encoded:
+                    tries.append((sub + cmd, False))   # a draw command on a command endpoint
+                for group, allow_encoded in tries:
+                    pkts = sorted((t for k in group for t in chans[k]), key=lambda t: (t.ts, t.frame))
+                    key = group[0]
+                    m = (_encoded_stream(transfers, key, pkts, min_frames) if allow_encoded else None)
+                    if m is None and not encoded:
+                        m = _raw_stream(transfers, key, pkts, min_frames)
+                    if m is None or not _uses_several(m):
+                        continue
+                    mine = [singles[k] for k in group if k in singles]
+                    best = max((s["_complete"] for s in mine), default=0)
+                    covered = sum(s["packets"] for s in mine)
+                    # a tie means the endpoints alone each looked like a smaller screen in step
+                    # with the other: one frame over both is the simpler story. One endpoint alone
+                    # can see one more whole frame at each end, where the capture cut a frame.
+                    if m["_complete"] + 2 >= best and m["packets"] >= covered:
+                        cands.append(((m["_complete"], m["packets"]), m, group))
+        taken: set = set()
+        for _, m, group in sorted(cands, key=lambda c: c[0], reverse=True):
+            if taken.isdisjoint(group):
+                taken |= set(group)
+                out.append((m, group))
+    return out
+
+
+def _finish(s: dict) -> None:
+    """Which endpoints carry the stream's frames, in what layout, and where its draw command goes."""
+    frames, heads = s.pop("_frames"), s.pop("_heads")
+    s.pop("_complete", None)
+    order: list[int] = []
+    for f in sorted(frames, key=len, reverse=True)[:1] + frames:
+        for t in f:
+            if t.endpoint not in order:
+                order.append(t.endpoint)
+    n = len(order)
+    layout = None
+    if n > 1:
+        multi = [f for f in frames if len(f) >= n]
+        if all(t.endpoint == order[k % n] for f in multi for k, t in enumerate(f)):
+            layout = "alternate"
+        elif all(t.endpoint == order[k * n // len(f)] for f in multi for k, t in enumerate(f)):
+            layout = "blocks"
+        else:
+            layout = "mixed"
+        types = {t.endpoint: t.xfer_type for f in frames for t in f}
+        s["endpoint"], s["xfer_type"] = order[0], types[order[0]]
+    head_eps = Counter(h.endpoint for h in heads)
+    head_ep = head_eps.most_common(1)[0][0] if head_eps else None
+    s["endpoints"] = order or [s["endpoint"]]
+    s["endpoint_layout"] = layout
+    s["header_endpoint"] = head_ep if head_ep is not None and head_ep not in order else None
 
 
 def _add_ack(s: dict, transfers: list[Transfer], device: int, frames: list, ids: set) -> None:
@@ -233,8 +351,23 @@ def describe(s: dict) -> str:
     if s.get("channel_order"):
         order += f" {s['channel_order'].upper()}"
     kind = f"raw {s['format']}{order}" if s.get("raw") else s["format"]
-    return (f"{kind} stream on {XFER_NAMES.get(s['xfer_type'])} EP 0x{s['endpoint']:02x}:{size} "
+    return (f"{kind} stream on {XFER_NAMES.get(s['xfer_type'])} {endpoints(s)}:{size} "
             f"{s['frames']} frames{part} in {s['packets']} packets of {s['chunk']} bytes{hdr}{ack}")
+
+
+LAYOUTS = {"alternate": "packets alternate between them", "blocks": "each frame's first part on the first one",
+           "mixed": "no fixed order"}
+
+
+def endpoints(s: dict) -> str:
+    """'EP 0x02', or 'EP 0x02 + 0x04 (packets alternate between them), command on EP 0x01'."""
+    eps = s.get("endpoints") or [s["endpoint"]]
+    out = "EP " + " + ".join(f"0x{e:02x}" for e in eps)
+    if s.get("endpoint_layout"):
+        out += f" ({LAYOUTS[s['endpoint_layout']]})"
+    if s.get("header_endpoint") is not None:
+        out += f", command on EP 0x{s['header_endpoint']:02x}"
+    return out
 
 
 # ---- raw pixel streams (no image file format) ----
@@ -503,6 +636,7 @@ def _raw_stream(transfers: list[Transfer], key: tuple, pkts: list[Transfer], min
         s["header_packet"] = " ".join(tokens)
     _add_ack(s, transfers, key[0], frames, ids)
     s["ids"] = ids
+    s.update(_frames=frames, _heads=heads_used, _complete=len(frames))
     return s
 
 

@@ -266,8 +266,9 @@ SEND_IMAGE = '''
         for role in ("count", "index"):
             if st[role] is not None and len(parts) >= 1 << (8 * (st[role + "_width"] or 1)):
                 raise ValueError(f"{len(parts)} packets do not fit the packet {role} field; use a smaller image")
+        eps, layout = st["endpoints"], st["layout"]
         if st["header_packet"]:
-            self.dev.write(st["endpoint"], self._frame_command(st, x, y, w, h, len(image)), timeout)
+            self.dev.write(st["header_endpoint"] or eps[0], self._frame_command(st, x, y, w, h, len(image)), timeout)
         for k, part in enumerate(parts):
             head = bytearray.fromhex(st["first"] if k == 0 else st["next"])
             if st["count"] is not None and (k == 0 or st["count_in_next"]):
@@ -279,7 +280,11 @@ SEND_IMAGE = '''
             pkt = bytes(head) + part
             if st["padded"]:
                 pkt = pkt.ljust(st["chunk"], b"\\x00")
-            self.dev.write(st["endpoint"], pkt, timeout)
+            # a frame over several endpoints: packets alternate between them, or the first part of
+            # the frame goes to the first endpoint and so on
+            ep = eps[k % len(eps)] if layout == "alternate" else \
+                eps[k * len(eps) // len(parts)] if layout == "blocks" else eps[0]
+            self.dev.write(ep, pkt, timeout)
         if st["ack"]:
             return bytes(self.dev.read(st["ack"]["endpoint"], max(64, st["ack"]["length"]), timeout))
         return None
@@ -503,6 +508,8 @@ def generate(proto: Protocol) -> str:
             def tpl(pattern):
                 return "".join(b if re.fullmatch(r"[0-9a-f]{2}", b) else "00" for b in pattern.split())
             streams.append(dict(format=st["format"], endpoint=st["endpoint"], chunk=st["chunk"],
+                                endpoints=st.get("endpoints") or [st["endpoint"]],
+                                layout=st.get("endpoint_layout"), header_endpoint=st.get("header_endpoint"),
                                 padded=st["padded"], header_len=st["header_len"],
                                 first=tpl(st["first_header"]), next=tpl(st["next_header"] or st["first_header"]),
                                 count=st["count_offset"], count_in_next=st["count_in_next"],

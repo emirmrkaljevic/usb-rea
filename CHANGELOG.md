@@ -1,6 +1,15 @@
 # Changelog
 
 ## Unreleased
+- image streams over several endpoints: for a device with more than one host->device channel the
+  channels are also merged by time, so frames whose packets alternate between two endpoints, go to
+  one endpoint and then another, or whose draw command goes to the command endpoint are found as one
+  stream (kept only when most frames really span endpoints and it explains as many frames and packets
+  as the per-endpoint guesses; two screens with their own frame rates stay two streams). `streams`
+  gains `endpoints`, `endpoint_layout` (`alternate`, `blocks`) and `header_endpoint`; the report
+  lists them and `send_image()` writes each packet and the draw command to the right endpoint.
+- synth: `make_capture(..., image_stream=True, endpoints="alternate"|"blocks"|"command")`;
+  `usb-rea demo --device lcd --endpoints alternate`.
 
 ## v0.7.7 (2026-11-01)
 RGB or BGR on raw screen streams, settled with a test card.

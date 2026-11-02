@@ -95,7 +95,9 @@ def build():
         `states` lists commands the app only sent after a mode command chose one value (also on the
         command as `requires`: state, value, count, other values seen, evidence frames).
         `streams` lists continuous image streams to a screen (JPEG/PNG/GIF, or raw RGB565/RGB888 pixels
-        found by size with `raw` true): endpoint, format, frame and packet counts, chunk size, per-packet
+        found by size with `raw` true): endpoint, `endpoints` (every host->device endpoint the frame bytes
+        go to, with `endpoint_layout` 'alternate' or 'blocks' when there are several) and
+        `header_endpoint` (where the draw command goes, when not with the pixels), format, frame and packet counts, chunk size, per-packet
         header (`nn` packet count, `ii` index, 8 or 16 bit), image size, frame rate, the device's
         per-frame `ack` and for raw streams `header_packet` (the command before each frame), `region`
         (x/y/width/height fields), `byteorder`, `size_alternatives` and `channel_order` ('rgb' or 'bgr',

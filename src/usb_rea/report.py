@@ -72,7 +72,8 @@ def render(proto: Protocol, capture: str = "", sha256: str = "") -> str:
 def _streams(proto: Protocol) -> list[str]:
     L = []
     for s in proto.streams:
-        chan = f"{XFER_NAMES.get(s['xfer_type'])} EP 0x{s['endpoint']:02x}"
+        eps = s.get("endpoints") or [s["endpoint"]]
+        chan = f"{XFER_NAMES.get(s['xfer_type'])} EP " + " + ".join(f"0x{e:02x}" for e in eps)
         if s.get("raw"):
             intro = (f"Raw {s['format'].upper()} pixels sent continuously (a picture or video for a screen, no "
                      "image file format): runs of large packets with no pause between them whose payload is "
@@ -89,6 +90,15 @@ def _streams(proto: Protocol) -> list[str]:
               f"{s['packets']} packets in all" + (f", {s['partial']} of them from a frame cut off by the capture"
                                                   if s.get("partial") else "") + ")",
               f"- First frames start at: {', '.join(map(str, s['first_frames']))}"]
+        if len(eps) > 1:
+            how = {"alternate": "the packets alternate between them in this order",
+                   "blocks": "the first part of each frame goes to the first one, the rest to the next",
+                   "mixed": "in no fixed order; send_image() writes them all to the first one, check on the device"}
+            L.append(f"- Endpoints: each frame is spread over EP {', '.join(f'0x{e:02x}' for e in eps)}; "
+                     + how[s["endpoint_layout"]])
+        if s.get("header_endpoint") is not None:
+            L.append(f"- The command before each frame goes to EP 0x{s['header_endpoint']:02x}, the pixels to "
+                     + ", ".join(f"EP 0x{e:02x}" for e in eps))
         if s["size"] and s.get("raw"):
             bpp = {"rgb565": 2, "rgb888": 3}[s["format"]]
             L.append(f"- Screen: {s['size'][0]}x{s['size'][1]} {s['format'].upper()}, {s['frame_bytes']} bytes "

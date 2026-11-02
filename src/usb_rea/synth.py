@@ -256,7 +256,8 @@ def make_capture(path, actions: list[str] | None = None, transport: str = "bulk"
                  poll: float = 0.0, poll_seq: bool = False, observe: bool = False,
                  handshake: bool = False, reopen: bool = False, branch: bool = False,
                  states: bool = False, image_stream: bool = False, fps: float = 20.0,
-                 raw: str | None = None, testcard: str | None = None) -> tuple[Path, Path]:
+                 raw: str | None = None, testcard: str | None = None,
+                 endpoints: str | None = None) -> tuple[Path, Path]:
     """Write <path> (pcap) and <path>.actions.json. Returns both paths.
 
     poll: if > 0, the "vendor app" also sends a status request every `poll` seconds on the
@@ -291,6 +292,13 @@ def make_capture(path, actions: list[str] | None = None, transport: str = "bulk"
     (100, 8); ack 55 AA 82 00 on EP 0x82. 'rgb888': a 128x160 screen at 5 fps with no command, 64-byte
     packets each starting with the packet index and count as u16 LE (1024 packets a frame).
 
+    endpoints: (image streams) spread each frame over more than one host->device endpoint, as some
+    screens take it. 'alternate': the frame's packets alternate between two data endpoints (JPEG on
+    interrupt EP 0x03 and 0x05, raw pixels on bulk EP 0x02 and 0x04, the draw command first on the
+    first one). 'blocks': the first part of the frame's packets goes to the first endpoint, the rest
+    to the second (packet k of n on endpoint k * 2 // n). 'command': (rgb565) the draw command goes
+    to the command endpoint (interrupt EP 0x01, next to brightness) and the pixels to bulk EP 0x02.
+
     device: 'lamp' (see module doc), 'fan' (counter + 16-bit BE + RGB + lookup + CRC16),
     'dial' (32-bit LE position + 4-bit brightness bitfield + sum8) or 'lcd' (brightness, image stream).
     """
@@ -304,6 +312,9 @@ def make_capture(path, actions: list[str] | None = None, transport: str = "bulk"
         raise ValueError("raw is 'rgb565' or 'rgb888' and needs image_stream=True")
     if testcard not in (None, "rgb", "bgr") or (testcard and not raw):
         raise ValueError("testcard is 'rgb' or 'bgr' and needs a raw stream")
+    if endpoints not in (None, "alternate", "blocks", "command") or (endpoints and not image_stream) \
+            or (endpoints == "command" and raw != "rgb565"):
+        raise ValueError("endpoints is 'alternate', 'blocks' or 'command' (rgb565 only) and needs image_stream=True")
     if device == "fan":
         actions = actions or (FAN_STATE_ACTIONS if states else FAN_ACTIONS)
     elif device == "dial":
@@ -420,11 +431,13 @@ def make_capture(path, actions: list[str] | None = None, transport: str = "bulk"
                 pkts = [raw_header(x, y, wd, ht)] + [pix[i:i + 512] for i in range(0, len(pix), 512)]
             else:
                 pkts = raw888_packets(encode_testcard(128, 160, 3, testcard) if card else gradient(128, 160, n, bpp=3))
-            if n == 0:
-                pkts = pkts[3:]   # the capture started in the middle of a frame
+            eps = _stream_endpoints(endpoints, len(pkts), (0x02, 0x04), raw == "rgb565")
+            xtypes = [1 if ep == 0x01 else 3 for ep in eps]
+            if n == 0:   # the capture started in the middle of a frame
+                pkts, eps, xtypes = pkts[3:], eps[3:], xtypes[3:]
             step = 0.0004 if raw == "rgb565" else 0.0001
             for k, pkt in enumerate(pkts):
-                w.out(tf + step * k, 0x02, pkt, xtype=3)
+                w.out(tf + step * k, eps[k], pkt, xtype=xtypes[k])
             if raw == "rgb565":
                 w.in_(tf + step * len(pkts) + 0.001, 0x82, b"\x55\xaa\x82\x00")
             tf += 1 / fps
@@ -434,10 +447,11 @@ def make_capture(path, actions: list[str] | None = None, transport: str = "bulk"
         tf, n = 1_760_000_000.0 + 0.02, 0
         while tf < t:
             pkts = lcd_frames(fake_jpeg(video.randint(1500, 4000), seed=seed * 1000 + n))
-            if n == 0:
-                pkts = pkts[2:]   # the capture started in the middle of a frame
+            eps = _stream_endpoints(endpoints, len(pkts), (0x03, 0x05), False)
+            if n == 0:   # the capture started in the middle of a frame
+                pkts, eps = pkts[2:], eps[2:]
             for k, pkt in enumerate(pkts):
-                w.out(tf + 0.001 * k, 0x03, pkt, xtype=1)
+                w.out(tf + 0.001 * k, eps[k], pkt, xtype=1)
             w.in_(tf + 0.001 * len(pkts) + 0.001, 0x84, b"\x08\x81" + bytes(14))
             tf += 1 / fps
             n += 1
@@ -446,6 +460,18 @@ def make_capture(path, actions: list[str] | None = None, transport: str = "bulk"
     mpath = path.with_suffix(path.suffix + ".actions.json")
     mpath.write_text(json.dumps(marks, indent=1))
     return path, mpath
+
+
+def _stream_endpoints(how: str | None, n: int, data: tuple[int, int], command: bool) -> list[int]:
+    """Endpoint of each of a frame's n packets (the first one is the draw command when `command`)."""
+    if how is None:
+        return [data[0]] * n
+    if how == "command":
+        return [0x01] + [data[0]] * (n - 1)
+    head, m = ([data[0]], n - 1) if command else ([], n)
+    if how == "alternate":
+        return head + [data[k % 2] for k in range(m)]
+    return head + [data[k * 2 // m] for k in range(m)]
 
 
 def capture_from_messages(path, messages, vid: int, pid: int, noise: bool = True, seed: int = 0):
