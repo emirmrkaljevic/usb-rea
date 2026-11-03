@@ -1,6 +1,7 @@
 # Changelog
 
-## Unreleased
+## v0.7.9 (2026-11-03)
+States the device reports, and mode switches inside an action.
 - states the device reports: a command the app only sent while a named status reply byte (a
   `seen mode turbo` mode or an on/off flag) showed one value gets `requires` with `source: "reply"`
   (reply, byte, value, count, other values, reply and command frames, and the `setter` command that
