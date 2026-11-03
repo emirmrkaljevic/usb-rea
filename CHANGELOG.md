@@ -1,6 +1,17 @@
 # Changelog
 
 ## Unreleased
+- states the device reports: a command the app only sent while a named status reply byte (a
+  `seen mode turbo` mode or an on/off flag) showed one value gets `requires` with `source: "reply"`
+  (reply, byte, value, count, other values, reply and command frames, and the `setter` command that
+  made the reply show that value, if any). The report and CLI demo list it; the driver reads the
+  status first and switches with the setter, or raises `StateError`.
+- mode switches inside an action: a multi-packet action whose first packet is a state command with
+  one fixed value, and whose last packet (if any) puts back the value from before or one fixed value,
+  keeps only its own packets and gets `switch` (also under `switches`). The driver sends the state
+  command around the action, as the app did.
+- synth: `make_capture(..., device="fan", reported=True)` (`press mode N` labels for the fan's own
+  button) and `make_capture(..., device="fan", switch=True)`.
 
 ## v0.7.8 (2026-11-02)
 Image streams whose frames span several endpoints.

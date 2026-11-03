@@ -121,6 +121,7 @@ class Command:
     notes: list[str] = field(default_factory=list)
     steps: list["Command"] = field(default_factory=list)  # follow-up packets of a multi-packet transaction
     requires: list | None = None   # states this command was only sent in (states.py)
+    switch: dict | None = None     # a state the app switched to inside this action and back (states.py)
 
     @property
     def arity(self) -> int:
@@ -174,6 +175,7 @@ class Protocol:
     observations: list = field(default_factory=list)  # 'seen ...' markers and the reply bytes they named
     handshake: list = field(default_factory=list)  # messages sent once before the first action (handshake.py)
     states: list = field(default_factory=list)  # commands only sent in one state of a mode command (states.py)
+    switches: list = field(default_factory=list)  # state switches the app made inside an action (states.py)
     streams: list = field(default_factory=list)  # image streams to a screen, kept out of the commands (streams.py)
 
     def to_dict(self):
@@ -261,7 +263,12 @@ def infer(actions: list[Action], vid: int | None = None, pid: int | None = None)
             head.confidence = round(min(c.confidence for c in steps), 2)
         commands.append(head)
 
-    # command-id bytes: const positions whose value differs between commands on the same channel
+    mark_command_ids(commands)
+    return Protocol(vid, pid, commands, unmatched)
+
+
+def mark_command_ids(commands: list[Command]):
+    """Command-id bytes: const positions whose value differs between commands on the same channel."""
     by_chan = defaultdict(list)
     for c in commands:
         by_chan[(c.endpoint, c.xfer_type, c.setup[:4] if c.setup else None)].append(c)
@@ -270,10 +277,9 @@ def infer(actions: list[Action], vid: int | None = None, pid: int | None = None)
             continue
         for off in range(min(c.length for c in cs)):
             fs = [next((f for f in c.fields if f.offset == off), None) for c in cs]
-            if all(f is not None and f.kind == "const" for f in fs) and len({f.const for f in fs}) > 1:
+            if all(f is not None and f.kind in ("const", "command") for f in fs) and len({f.const for f in fs}) > 1:
                 for f in fs:
                     f.kind = "command"
-    return Protocol(vid, pid, commands, unmatched)
 
 
 def _cross_packet_checksums(steps: list[Command], samples: list[list[bytes]]):

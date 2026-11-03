@@ -158,6 +158,23 @@ class Device:
                              f"set_{{name}}({{value:g}}) first (or use Device(auto_state=True))")
         setter(value)
 
+    def _require_reported(self, query, name, want, setter=None, value=None):
+        """Read the state the device reports; when it is not the one the vendor app always saw before this
+        command, switch it with the command seen to change it and read it again (report.md, "Only sent while")."""
+        got = query().get(name)
+        if got == want:
+            return
+        if setter is None or not self.auto_state:
+            how = f"call {{setter.__name__}}({{value:g}}) first (or use Device(auto_state=True))" if setter \
+                else "no command in the capture changed it, switch it on the device"
+            raise StateError(f"the device reports {{name}} {{got!r}}; the vendor app only sent this command while it "
+                             f"reported {{want!r}}: {{how}}")
+        setter(value)
+        got = query().get(name)
+        if got != want:
+            raise StateError(f"after {{setter.__name__}}({{value:g}}) the device still reports {{name}} {{got!r}}, "
+                             f"not {{want!r}}")
+
     def _send(self, spec, *values, prev=None):
         if prev is None:
             self.sent = []
@@ -341,6 +358,11 @@ QUERY = '''
 '''
 
 
+def _field(name: str) -> str:
+    """Key of a named reading in parse() output."""
+    return _ident(name) + ("_value" if _ident(name) in ("raw", "ok", "error", "checksum_ok") else "")
+
+
 def _ident(name: str) -> str:
     s = re.sub(r"\W+", "_", name).strip("_").lower() or "cmd"
     return s if not s[0].isdigit() else "cmd_" + s
@@ -382,7 +404,7 @@ def generate(proto: Protocol) -> str:
             if f.kind in ("value", "bitfield"):
                 name = prefix + (f"_{f.index}" if f.index else "")
             elif f.name:
-                name = _ident(f.name) + ("_value" if _ident(f.name) in ("raw", "ok", "error", "checksum_ok") else "")
+                name = _field(f.name)
             else:
                 name = f"{f.kind}_{f.offset}"
             d = dict(kind=f.kind, name=name, offset=f.offset, width=f.width, endian=f.endian,
@@ -441,6 +463,7 @@ def generate(proto: Protocol) -> str:
     specs.append(f"HANDSHAKE = {hs!r}\n")
 
     queries = []
+    qnames = {}   # reply -> driver method that asks for it
     names = {_ident(c.name) for c in proto.commands}
     for r in proto.responses:
         ident = _ident(r.query)
@@ -458,6 +481,7 @@ def generate(proto: Protocol) -> str:
                                         doc=f"Send {r.query} and decode the device's reply ({doc}"))
             continue
         qname = f"query_{ident}" if ident not in names else f"query_{ident}_reply"
+        qnames[r.query] = qname
         if r.request is not None:
             q = r.request
             if any(f.kind == "unknown" for f in q.fields):
@@ -474,7 +498,9 @@ def generate(proto: Protocol) -> str:
         queries.append(QUERY.format(name=qname, sig="self", call=f"{qarg}, {const}",
                                     doc=f"{how} and decode the reply ({doc}"))
 
-    setters = {r["state"] for r in proto.states}
+    from .states import fmt
+    setters = {r["state"] for r in proto.states if r.get("source") != "reply"} | \
+        {c.switch["state"] for c in proto.commands if c.switch}
     for c in proto.commands:
         const = _ident(c.name).upper()
         spec = command_spec(c)
@@ -487,12 +513,40 @@ def generate(proto: Protocol) -> str:
         body = f"return {send}"
         if c.name in setters:
             body = f"r = {send}\n        self.state[{c.name!r}] = float(v0)\n        return r"
+        own = [r for r in c.requires or [] if r.get("source") != "reply"]
+        rep = [r for r in c.requires or [] if r.get("source") == "reply" and r["reply"] in qnames]
         pre = "".join(f"self._require({r['state']!r}, {r['value']!r}, self.set_{_ident(r['state'])})\n        "
-                      for r in c.requires or [])
-        if c.requires:
+                      for r in own)
+        for r in rep:
+            want = bool(r["value"]) if r["flag"] else r["value"]
+            st = r["setter"]
+            how = f"self.set_{_ident(st['command'])}, {st['value']!r}" if st else "None"
+            pre += f"self._require_reported(self.{qnames[r['reply']]}, {_field(r['state'])!r}, {want!r}, {how})\n        "
+        if own:
             lines += "\n\n        Only sent by the vendor app while " + ", ".join(
-                f"{r['state']} was {r['value']:g} (frames {', '.join(map(str, r['frames'][:8]))})" for r in c.requires
+                f"{r['state']} was {r['value']:g} (frames {', '.join(map(str, r['frames'][:8]))})" for r in own
             ) + ": sets that first, or raises StateError with Device(auto_state=False)."
+        for r in rep:
+            st = r["setter"]
+            lines += (f"\n\n        Only sent by the vendor app while the device reported {r['state']} {fmt(r['value'])} "
+                      f"({r['reply']} {r['where']}, replies in frames {', '.join(map(str, r['reply_frames'][:8]))}): "
+                      f"{qnames[r['reply']]}() is read first" + (
+                          f", and set_{_ident(st['command'])}({fmt(st['value'])}) switches it when it differs"
+                          if st else ", and StateError is raised when it differs (no command changed it in the capture)") + ".")
+        sw = c.switch
+        if sw:
+            setter = f"self.set_{_ident(sw['state'])}"
+            back = (f"if prev is not None:   # put back the {sw['state']} the device was in, as the app did\n"
+                    f"            {setter}(prev)\n        " if sw["restore"] == "previous" else
+                    f"{setter}({sw['restore']!r})\n        " if sw["restore"] is not None else "")
+            pre += (f"prev = self.state.get({sw['state']!r})\n        {setter}({sw['enter']!r})\n        ")
+            body = f"r = {send}\n        {back}return r"
+            lines += (f"\n\n        The vendor app switched {sw['state']} to {fmt(sw['enter'])} inside this action "
+                      f"(frames {', '.join(map(str, sw['enter_frames'][:8]))})" + (
+                          f" and back afterwards (frames {', '.join(map(str, sw['restore_frames'][:8]))}); the driver "
+                          "puts back the value it last set (none: the device stays in the new one)"
+                          if sw["restore"] == "previous" else
+                          f" and then to {fmt(sw['restore'])}" if sw["restore"] is not None else "") + ".")
         out.append(f'''
     def set_{_ident(c.name)}({sig}):
         """{c.name} ({c.confidence:.0%} confidence; evidence frames {frames}).

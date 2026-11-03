@@ -111,6 +111,16 @@ FAN_ACTIONS = ["fan 800", "fan 1200", "fan 2650", "fan 4000", "color 255 0 0", "
 FAN_STATE_ACTIONS = ["mode 1", "fan 800", "fan 1200", "mode 3", "color 255 0 0", "color 0 128 255",
                      "mode 2", "fan 2650", "fan 4000", "mode 3", "color 10 20 30"]
 
+# reported=True: the mode is changed on the fan itself ('press mode N', no host traffic) or by the app
+# ('mode N'); the app reads the mode from the status reply and only sends a color while it says turbo
+FAN_REPORTED_ACTIONS = ["fan 800", "press mode 3", "color 255 0 0", "color 0 128 255", "press mode 1",
+                        "fan 1200", "mode 2", "fan 2650", "mode 3", "color 10 20 30", "mode 1",
+                        "fan 4000"]
+
+# switch=True: the app switches to mode 3 inside every color action and back to the mode before
+FAN_SWITCH_ACTIONS = ["mode 1", "fan 800", "color 255 0 0", "mode 3", "fan 1200", "mode 2",
+                      "color 0 128 255", "fan 2650", "color 10 20 30", "mode 1", "color 40 50 60", "fan 4000"]
+
 
 def encode_fan(name: str, values: list[float], seq: int) -> bytes:
     """Fake fan controller: 5A <seq> <cmd> <args...> pad to 6, then CRC16/MODBUS little-endian."""
@@ -257,7 +267,8 @@ def make_capture(path, actions: list[str] | None = None, transport: str = "bulk"
                  handshake: bool = False, reopen: bool = False, branch: bool = False,
                  states: bool = False, image_stream: bool = False, fps: float = 20.0,
                  raw: str | None = None, testcard: str | None = None,
-                 endpoints: str | None = None) -> tuple[Path, Path]:
+                 endpoints: str | None = None, reported: bool = False,
+                 switch: bool = False) -> tuple[Path, Path]:
     """Write <path> (pcap) and <path>.actions.json. Returns both paths.
 
     poll: if > 0, the "vendor app" also sends a status request every `poll` seconds on the
@@ -280,6 +291,14 @@ def make_capture(path, actions: list[str] | None = None, transport: str = "bulk"
 
     states: (fan) use FAN_STATE_ACTIONS, where color is only ever sent after 'mode 3' while fan
     speed is set in modes 1 and 2, so color gets a state precondition.
+
+    reported: (fan) use FAN_REPORTED_ACTIONS: the user changes the mode with the fan's own button
+    ('press mode N' labels make no traffic and no marker) and the app only sends a color while the
+    fan's status reply says turbo; it also sets mode 2 and 3 itself. Implies poll=0.25 (unless set)
+    and observe=True, so the mode byte of the status reply is named.
+
+    switch: (fan) use FAN_SWITCH_ACTIONS: every color action is sent as mode 3, the color, then the
+    mode the app was in before (1 or 2), all inside the one action, each packet with its own reply.
 
     image_stream: (lcd) the vendor app streams a JPEG video to the screen at `fps` frames per second
     for the whole capture (frames of 1.5 to 4 KB, so 3 to 8 packets each, the first one cut off by
@@ -304,8 +323,12 @@ def make_capture(path, actions: list[str] | None = None, transport: str = "bulk"
     """
     from .model import split_label, split_values
     rnd = random.Random(seed)
-    if states and device != "fan":
+    if (states or reported or switch) and device != "fan":
         raise ValueError("only the synthetic fan has state-dependent commands")
+    if sum((states, reported, switch)) > 1:
+        raise ValueError("states, reported and switch are separate scenarios; pick one")
+    if reported:
+        poll, observe = poll or 0.25, True
     if image_stream and device != "lcd":
         raise ValueError("only the synthetic lcd streams images")
     if raw not in (None, "rgb565", "rgb888") or (raw and not image_stream):
@@ -316,7 +339,8 @@ def make_capture(path, actions: list[str] | None = None, transport: str = "bulk"
             or (endpoints == "command" and raw != "rgb565"):
         raise ValueError("endpoints is 'alternate', 'blocks' or 'command' (rgb565 only) and needs image_stream=True")
     if device == "fan":
-        actions = actions or (FAN_STATE_ACTIONS if states else FAN_ACTIONS)
+        actions = actions or (FAN_STATE_ACTIONS if states else FAN_REPORTED_ACTIONS if reported
+                              else FAN_SWITCH_ACTIONS if switch else FAN_ACTIONS)
     elif device == "dial":
         actions = actions or DIAL_ACTIONS
     elif device == "lcd":
@@ -346,6 +370,7 @@ def make_capture(path, actions: list[str] | None = None, transport: str = "bulk"
     seq = 0x40
     targets = [(0.0, 1000)]   # fan: (time, set RPM), for the status replies
     modes = [(0.0, 0x00)]     # fan: (time, mode byte), reported in the status replies with observe
+    current = None            # fan: the last 'mode N' the app sent (switch=True restores it)
     for n_act, label in enumerate(actions):
         if reopen and handshake and n_act == len(actions) // 2:
             open_session(t - 0.4, random.Random(seed + 8).randbytes(4))
@@ -356,9 +381,23 @@ def make_capture(path, actions: list[str] | None = None, transport: str = "bulk"
         if noise:
             for _ in range(rnd.randint(1, 3)):
                 w.in_(t + rnd.random() * 0.2, 0x81, b"\x00\x00\x00\x00")
+        name, values = split_values(label)
+        if device == "fan" and name == "press mode":
+            # the user pressed the mode button on the fan itself: no host traffic and no marker,
+            # only the status replies show the new mode
+            modes.append((t, FAN_MODES[int(values[0])]))
+            t += 0.5
+            continue
+        wrap = device == "fan" and switch and name == "color" and current in (1, 2)
         if device == "fan":
             seq += 1
-            msg = encode_fan(*split_values(label), seq)
+            if wrap:   # the app switches to mode 3 just for the color, then back to the mode it was in
+                msgs = [encode_fan("mode", [3], seq), encode_fan(name, values, seq + 1),
+                        encode_fan("mode", [current], seq + 2)]
+                seq += 2
+            msg = encode_fan(name, values, seq)
+            if name == "mode":
+                current = int(values[0])
         elif device == "dial":
             msg = encode_dial(*split_values(label))
         elif device == "lcd":
@@ -366,14 +405,26 @@ def make_capture(path, actions: list[str] | None = None, transport: str = "bulk"
         else:
             name, value = split_label(label)
             msg = encode(name, value if value is not None else 0)
-        if device == "lcd":
+        if wrap:
+            for k, m in enumerate(msgs):
+                at = t + 0.3 + 0.03 * k
+                if transport == "control":
+                    w.control_out(at, bytes([0x21, 0x09, 0x00, 0x02, 0, 0, len(m), 0]), m)
+                else:
+                    w.out(at, 0x01, m)
+                w.in_(at + 0.01, 0x81, fan_reply(m, values if m[2] == 0x20 else [0]))
+                if m[2] == 0x30:
+                    modes.append((at, m[3]))
+        elif device == "lcd":
             w.out(t + 0.3, 0x01, msg, xtype=1)
         elif transport == "control":
             # HID SET_REPORT, output report 0
             w.control_out(t + 0.3, bytes([0x21, 0x09, 0x00, 0x02, 0, 0, len(msg), 0]), msg)
         else:
             w.out(t + 0.3, 0x01, msg)
-        if device == "fan":
+        if wrap:
+            pass
+        elif device == "fan":
             w.in_(t + 0.31, 0x81, fan_reply(msg, split_values(label)[1]))
             if msg[2] == 0x10:
                 targets.append((t + 0.3, int(split_values(label)[1][0])))

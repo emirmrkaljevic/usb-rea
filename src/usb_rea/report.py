@@ -4,6 +4,34 @@ from .infer import Protocol, formula
 from .model import XFER_NAMES
 
 
+def _requires(r: dict) -> str:
+    from .states import fmt
+    if r.get("source") == "reply":
+        st = r["setter"]
+        how = (f"switches it with `{st['command']} {fmt(st['value'])}` (the reply showed `{fmt(r['value'])}` after it "
+               f"each time, frames {', '.join(map(str, st['frames'][:8]))}) and reads it again" if st else
+               "raises `StateError` when it reports another value (no command in the capture changed it)")
+        return (f"- Only sent while the device reported `{r['state']} {fmt(r['value'])}` ({r['reply']} {r['where']}): "
+                f"{r['count']}x, the last reply before it in frame(s) {', '.join(map(str, r['reply_frames']))}; other "
+                f"commands were used while it reported {', '.join(f'`{fmt(v)}`' for v in r['other_values'])}. The "
+                f"driver reads it first and {how}")
+    return (f"- Only sent while `{r['state']} {r['value']:g}`: {r['count']}x, each after the `{r['state']}` "
+            f"command in frame(s) {', '.join(map(str, r['setter_frames']))}; other commands were used with "
+            f"`{r['state']}` {', '.join(f'{v:g}' for v in r['other_values'])}. The driver sets "
+            f"`{r['state']} {r['value']:g}` first (or raises `StateError` with `auto_state=False`)")
+
+
+def _switch(sw: dict) -> str:
+    from .states import fmt
+    back = (f", then back to the value from before ({', '.join(fmt(v) for v in sw['restore_values'])}; frames "
+            f"{', '.join(map(str, sw['restore_frames'][:8]))})" if sw["restore"] == "previous" else
+            f", then to `{sw['state']} {fmt(sw['restore'])}` (frames {', '.join(map(str, sw['restore_frames'][:8]))})"
+            if sw["restore"] is not None else ", and left it there")
+    return (f"- Switches `{sw['state']}` inside the action: {sw['count']}x the app sent `{sw['state']} "
+            f"{fmt(sw['enter'])}` first (frames {', '.join(map(str, sw['enter_frames'][:8]))}){back}. The rows below "
+            f"are the action's own packets; the driver sends the `{sw['state']}` command around them")
+
+
 def render(proto: Protocol, capture: str = "", sha256: str = "") -> str:
     L = ["# usb-rea protocol report", ""]
     if capture:
@@ -21,12 +49,8 @@ def render(proto: Protocol, capture: str = "", sha256: str = "") -> str:
         if c.setup:
             chan += f", setup `{c.setup.hex(' ')}`"
         L += [f"## `{c.name}`", "", f"- Channel: {chan}", f"- Length: {c.length} bytes",
-              f"- Confidence: {c.confidence:.0%}"] + [
-              f"- Only sent while `{r['state']} {r['value']:g}`: {r['count']}x, each after the `{r['state']}` "
-              f"command in frame(s) {', '.join(map(str, r['setter_frames']))}; other commands were used with "
-              f"`{r['state']}` {', '.join(f'{v:g}' for v in r['other_values'])}. The driver sets "
-              f"`{r['state']} {r['value']:g}` first (or raises `StateError` with `auto_state=False`)"
-              for r in c.requires or []] + ([f"- HID: {hid_by_cmd[c.name]}"] if c.name in hid_by_cmd else []) + ["", "| Byte | Role | Encoding |", "|---|---|---|"]
+              f"- Confidence: {c.confidence:.0%}"] + [_requires(r) for r in c.requires or []] + (
+              [_switch(c.switch)] if c.switch else []) + ([f"- HID: {hid_by_cmd[c.name]}"] if c.name in hid_by_cmd else []) + ["", "| Byte | Role | Encoding |", "|---|---|---|"]
         for f in c.fields:
             L.append(f"| {f.offset} | {f.kind} | `{f.describe()}` |")
         L += ["", "Evidence:", "", "| Action | Payload | Frame |", "|---|---|---|"]

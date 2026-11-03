@@ -218,9 +218,21 @@ def _demo(outdir: Path, device: str = "lamp", raw: str | None = None, testcard: 
     for st in proto.streams:
         from .streams import describe
         print(f"\nimage stream, kept out of the commands: {describe(st)} (driver: send_image())")
+    from .states import fmt
     for r in proto.states:
+        if r.get("source") == "reply":
+            print(f"  {r['command']} only sent while the device reported {r['state']} {fmt(r['value'])} "
+                  f"({r['count']}x; other commands ran while it reported {', '.join(map(fmt, r['other_values']))}): "
+                  "the driver reads it first" + (f" and switches with {r['setter']['command']} "
+                                                 f"{fmt(r['setter']['value'])}" if r["setter"] else ""))
+            continue
         print(f"  {r['command']} only sent while {r['state']} {r['value']:g} ({r['count']}x; other commands "
               f"ran in {r['state']} {', '.join(f'{v:g}' for v in r['other_values'])}): the driver sets it first")
+    for sw in proto.switches:
+        print(f"  {sw['command']} switches {sw['state']} to {fmt(sw['enter'])} inside the action ({sw['count']}x)"
+              + (", then back" if sw["restore"] == "previous" else
+                 f", then to {fmt(sw['restore'])}" if sw["restore"] is not None else "")
+              + ": the driver does the same")
     if proto.handshake:
         print(f"\nhandshake ({len(proto.handshake)} messages sent once when the app opens the device):")
         for st in proto.handshake:

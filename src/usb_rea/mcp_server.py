@@ -93,7 +93,12 @@ def build():
         checksum bytes, `uses`/`tokens` for reply bytes reused later as a session token, checksums,
         `retries`, `reopens`, and `branches` on a step whose reply byte decided what the app sent next).
         `states` lists commands the app only sent after a mode command chose one value (also on the
-        command as `requires`: state, value, count, other values seen, evidence frames).
+        command as `requires`: state, value, count, other values seen, evidence frames), and with
+        `source` "reply" those it only sent while a named status reply byte showed one mode or flag
+        value (`reply`, `where`, `reply_frames`, and `setter`: the command seen to make the reply show it).
+        `switches` lists actions where the app sent a state command first (`enter`) and maybe again
+        after (`restore`: "previous", a value or null); that command's packets are kept out of the
+        action, which carries the same `switch`.
         `streams` lists continuous image streams to a screen (JPEG/PNG/GIF, or raw RGB565/RGB888 pixels
         found by size with `raw` true): endpoint, `endpoints` (every host->device endpoint the frame bytes
         go to, with `endpoint_layout` 'alternate' or 'blocks' when there are several) and

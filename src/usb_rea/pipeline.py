@@ -53,7 +53,10 @@ def analyze(capture: str | Path, markers: str | Path | None = None, device: int 
         ts = [t for t in ts if id(t) not in drop]
     acts = assign(ts, marks)
     proto = infer(acts, vid, pid)
-    from .states import find_states
+    from .states import find_reported, find_states, find_switches
+    # a mode command, the action's own packets and the mode command again in one action: the switch is
+    # part of that action, not a transaction of its own
+    proto.switches = find_switches(acts, proto.commands)
     # commands the app only sent after a mode command chose one value (a state precondition)
     proto.states = find_states(acts, proto.commands)
     proto.hid = hid_summary(ts, proto)
@@ -64,6 +67,8 @@ def analyze(capture: str | Path, markers: str | Path | None = None, device: int 
                         for b in background]
     from .responses import analyze_responses
     proto.responses = analyze_responses(everything, proto.commands, background, seen)
+    # commands the app only sent while a status reply showed one mode or flag value
+    proto.states += find_reported(acts, proto.commands, proto.responses, everything)
     from .handshake import find_handshake
     # messages sent once before the first action; a reused session token also adds a note to the command
     proto.handshake = find_handshake(everything, background, marks, proto.commands, t0, reopens)

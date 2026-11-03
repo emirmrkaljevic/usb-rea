@@ -221,9 +221,38 @@ mode 3 (`make_capture(..., device="fan", states=True)`, used by `usb-rea demo --
 Limits: this is what the app did, not proof that the device refuses the command in other modes;
 capture the command in every mode you can to avoid a false precondition. Commands sent before any
 state command count as unknown and give no precondition, the state the device starts in is not read
-back (the driver sets the mode on the first gated call after `open()`), a reopened session resets
-what the driver knows, and states reported only in device replies, or a mode the app switches inside
-the same action, are not tracked yet.
+back (the driver sets the mode on the first gated call after `open()`), and a reopened session resets
+what the driver knows.
+
+### States the device reports, and mode switches inside an action
+
+Some apps decide from the device's own status: the fan's status reply says it is in turbo mode (set
+with a button on the device or by the app) and only then does the app offer a color. When a status
+reply byte has a name from `seen mode turbo` markers (a mode with a value -> word table, or an on/off
+flag), usb-rea takes, for every action, the last status reply before it (at most 5 s old). A command
+gets `requires` with `source: "reply"` (reply, byte, value, count, other values, reply and command
+frames) when it was sent at least twice, each time while the reply showed the same value, and other
+commands were used while it showed another one. A command whose every use was followed by a reply
+showing one value per argument (`mode 3` -> turbo) is the `setter`. The generated driver reads the
+status first (`query_poll_1()`), sends nothing more when it already matches, otherwise calls
+`set_mode(3)` and reads it again (`StateError` when it still differs, when there is no setter, or
+with `Device(auto_state=False)`). Try it with `make_capture(..., device="fan", reported=True)`,
+where `press mode N` labels stand for the fan's own button.
+
+Other apps switch the mode inside one click: mode 3, the color, then the mode it was in before.
+Diffed as is, that is a 3-packet "color" transaction whose last byte nobody can explain. When the
+first packet of a multi-packet action decodes as a state command (every constant byte and the
+checksum match, the argument is a value that command was captured with) with the same value every
+time, and the last packet (if there is one) as the same command putting back the value from before
+the action or one fixed value, the action keeps only its own packets and gets `switch` (state,
+`enter`, `restore` "previous", a value or null, evidence frames), listed under `switches` too. The
+driver's `set_color()` then sends `set_mode(3)`, the color and `set_mode(<what the driver last
+set>)`, as the app did. A first packet with different values, or a last one that fits neither rule,
+stays a plain transaction with a note. See `make_capture(..., device="fan", switch=True)`.
+
+Limits: only named reply bytes count (a raw byte that happens to line up with the commands is not
+used), the driver puts back only a mode it set itself, and the device's state between status replies
+is assumed to be the last one reported.
 
 ### Image streams: pictures and video sent to a screen
 
@@ -377,7 +406,7 @@ usb-rea hid capture.pcapng --decode "10ff0d1d000000" --type Output
 - [x] handshake reopens: the whole handshake sent again mid-capture is kept out of the actions
 - [x] handshake branches: the next steps chosen by a byte of the device's reply, replayed by the driver from the live reply
 - [x] state preconditions: commands the app only sent after a mode command chose one value, set first by the driver
-- [ ] states read from device replies and mode switches inside an action
+- [x] states read from device replies and mode switches inside an action, both replayed by the driver
 - [x] image streams: JPEG/PNG/GIF frames sent to a screen are kept apart from the commands, `send_image()` in the driver
 - [x] raw pixel streams (RGB565/RGB888 without an image header) and 16-bit header fields
 - [x] RGB or BGR channel order (and RGB565 byte order) from frames showing the `usb-rea testcard` picture
