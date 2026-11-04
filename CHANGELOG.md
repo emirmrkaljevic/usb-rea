@@ -1,6 +1,7 @@
 # Changelog
 
-## Unreleased
+## v0.7.10 (2026-11-04)
+Raw screen streams whose draw command starts the first pixel packet.
 - raw image streams whose draw command is the start of the frame's first pixel packet (no packet of
   its own): the region fields are read from the start of each frame, and the reading is kept where
   every frame is that many pixels plus a command of the same length (up to 32 bytes). `streams`
