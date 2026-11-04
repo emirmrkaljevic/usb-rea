@@ -306,6 +306,15 @@ command with x, y, width, height as u16 LE, every 4th frame a 48x16 clock) or `r
 The tests also check a Turing Smart Screen rev A fixture written from its public protocol
 description (6-byte commands, `DISPLAY_BITMAP` = 197, RGB565 little-endian pixels).
 
+Some screens don't give the draw command a packet of its own: it is the first bytes of the frame's
+first pixel packet, and the pixels follow right after it in the same packet. The frame is then a few
+bytes longer than the screen, so usb-rea also reads the region fields from the start of each frame
+and keeps the reading where every frame is exactly that many pixels plus a command of the same
+length. The report says "Command at the start of each frame's first packet", the pixels (and the
+channel order test) are read after the command, and `send_image()` puts the command in front of the
+pixels before cutting them into packets, as the app did. Try it with
+`usb-rea demo --device lcd --raw rgb565 --inline` (`make_capture(..., raw="rgb565", inline=True)`).
+
 Whether a screen takes red or blue first can't be read from ordinary pixels (a photo with red and
 blue swapped is still smooth), so usb-rea doesn't guess. `usb-rea testcard -o card.png --size 320x240`
 writes a picture that is half red, a quarter green, an eighth blue and an eighth white; put it on the
@@ -332,8 +341,9 @@ same per-packet header on each, and at most 4 data endpoints of one device are t
 frames whose payload is a listed screen size or matches the region fields; a screen size not in the
 list without a region command is missed, and the same byte count can fit several sizes (320x480
 RGB565 is also 480x320, and 320x320 RGB888), which the report lists so you can check on the device.
-Region fields are only looked for in the separate draw command (not inside the first pixel packet),
-width and height are expected in that order, the channel order is only known from test card
+Region fields are looked for in a separate draw command or at the start of the first pixel packet;
+a command inside the first packet needs region fields (constant bytes alone are not found), at most
+32 bytes, and no padding after the pixels. Width and height are expected in that order, the channel order is only known from test card
 frames, and a frame with a pause longer than 30 ms inside it is split. `send_image()` does not resize or
 re-encode (send an image of the captured size and format), and a stream needs at least 3 frames in
 the capture.
@@ -411,6 +421,7 @@ usb-rea hid capture.pcapng --decode "10ff0d1d000000" --type Output
 - [x] raw pixel streams (RGB565/RGB888 without an image header) and 16-bit header fields
 - [x] RGB or BGR channel order (and RGB565 byte order) from frames showing the `usb-rea testcard` picture
 - [x] image streams split over several endpoints (alternating, in blocks, or a draw command on the command endpoint)
+- [x] draw commands at the start of the first pixel packet (no packet of their own)
 
 ## Legal
 Reverse engineering for interoperability is permitted (EU Directive 2009/24/EC Art. 6, US DMCA §1201(f)). usb-rea only analyzes traffic of devices you own and never redistributes vendor code.

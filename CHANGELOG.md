@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+- raw image streams whose draw command is the start of the frame's first pixel packet (no packet of
+  its own): the region fields are read from the start of each frame, and the reading is kept where
+  every frame is that many pixels plus a command of the same length (up to 32 bytes). `streams`
+  gains `header_inline`; the report says "Command at the start of each frame's first packet", the
+  byte order and test card are read after the command, a byte count field counts only the pixels,
+  and `send_image()` puts the command in front of the pixels before cutting them into packets.
+- synth: `make_capture(..., raw="rgb565", inline=True)`; `usb-rea demo --device lcd --raw rgb565 --inline`.
+
 ## v0.7.9 (2026-11-03)
 States the device reports, and mode switches inside an action.
 - states the device reports: a command the app only sent while a named status reply byte (a

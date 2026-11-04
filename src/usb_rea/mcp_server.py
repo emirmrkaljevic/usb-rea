@@ -104,7 +104,8 @@ def build():
         go to, with `endpoint_layout` 'alternate' or 'blocks' when there are several) and
         `header_endpoint` (where the draw command goes, when not with the pixels), format, frame and packet counts, chunk size, per-packet
         header (`nn` packet count, `ii` index, 8 or 16 bit), image size, frame rate, the device's
-        per-frame `ack` and for raw streams `header_packet` (the command before each frame), `region`
+        per-frame `ack` and for raw streams `header_packet` (the command before each frame, or at the start of its first packet when
+        `header_inline` is true), `region`
         (x/y/width/height fields), `byteorder`, `size_alternatives` and `channel_order` ('rgb' or 'bgr',
         null = unknown; only settled by frames showing the `usb-rea testcard` picture, see
         `channel_evidence`); those packets are kept out of the commands.

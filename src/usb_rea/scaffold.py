@@ -265,6 +265,7 @@ SEND_IMAGE = '''
         Raw stream (rgb565, rgb888): pass a Pillow image (converted to the stream's pixel format, byte
         order and channel order; RGB when the capture did not show which) or bytes already in that format. When the app's command before each frame names
         a screen region, a smaller picture can be drawn at (x, y); give `size=(w, h)` with raw bytes.
+        A command the app sent at the start of the first pixel packet is sent there too.
         """
         st = STREAMS[stream]
         w = h = None
@@ -284,7 +285,11 @@ SEND_IMAGE = '''
             if st[role] is not None and len(parts) >= 1 << (8 * (st[role + "_width"] or 1)):
                 raise ValueError(f"{len(parts)} packets do not fit the packet {role} field; use a smaller image")
         eps, layout = st["endpoints"], st["layout"]
-        if st["header_packet"]:
+        if st["header_packet"] and st.get("inline"):
+            # the app put the draw command at the start of the first pixel packet
+            image = self._frame_command(st, x, y, w, h, len(image)) + image
+            parts = [image[i:i + room] for i in range(0, len(image), room)]
+        elif st["header_packet"]:
             self.dev.write(st["header_endpoint"] or eps[0], self._frame_command(st, x, y, w, h, len(image)), timeout)
         for k, part in enumerate(parts):
             head = bytearray.fromhex(st["first"] if k == 0 else st["next"])
@@ -573,6 +578,7 @@ def generate(proto: Protocol) -> str:
                                 raw=bool(st.get("raw")), size=st["size"], byteorder=st.get("byteorder"),
                                 channel_order=st.get("channel_order"),
                                 header_packet=tpl(st["header_packet"]) if st.get("header_packet") else None,
+                                inline=bool(st.get("header_inline")),
                                 region=st.get("region"), length_field=st.get("length_field"),
                                 ack=dict(endpoint=st["ack"]["endpoint"], length=len(st["ack"]["payload"].split()),
                                          expect=st["ack"]["payload"]) if st["ack"] else None))

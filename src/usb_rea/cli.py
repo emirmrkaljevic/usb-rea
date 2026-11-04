@@ -57,6 +57,8 @@ def main(argv=None) -> int:
                    help="lcd only: spread each frame over two endpoints (alternate, blocks) or send the draw "
                    "command on the command endpoint (command, needs --raw rgb565)")
 
+    d.add_argument("--inline", action="store_true",
+                   help="with --raw rgb565: the draw command starts the first pixel packet instead of its own packet")
     tc = sub.add_parser("testcard", help="write the test card picture; show it on the screen while "
                         "capturing so the report can tell RGB from BGR")
     tc.add_argument("-o", "--out", default="usb-rea-testcard.png")
@@ -111,7 +113,9 @@ def main(argv=None) -> int:
             p.error("--endpoints needs --device lcd")
         if a.endpoints == "command" and a.raw != "rgb565":
             p.error("--endpoints command needs --raw rgb565")
-        return _demo(Path(a.outdir), a.device, a.raw, a.testcard, a.endpoints)
+        if a.inline and (a.raw != "rgb565" or a.endpoints):
+            p.error("--inline needs --raw rgb565 and no --endpoints")
+        return _demo(Path(a.outdir), a.device, a.raw, a.testcard, a.endpoints, a.inline)
     if a.cmd == "testcard":
         from .streams import write_testcard
         try:
@@ -188,7 +192,7 @@ def _hid(a) -> int:
 
 
 def _demo(outdir: Path, device: str = "lamp", raw: str | None = None, testcard: str | None = None,
-          endpoints: str | None = None) -> int:
+          endpoints: str | None = None, inline: bool = False) -> int:
     from .synth import make_capture
     from .pipeline import analyze, sha256
     from .report import render
@@ -204,7 +208,7 @@ def _demo(outdir: Path, device: str = "lamp", raw: str | None = None, testcard: 
     cap, _ = make_capture(outdir / f"{device}.pcap", device=device, poll=0.5 if device == "fan" else 0.0,
                           observe=device == "fan", handshake=device == "fan", branch=device == "fan",
                           states=device == "fan", image_stream=device == "lcd", raw=raw,
-                          testcard=testcard, endpoints=endpoints)
+                          testcard=testcard, endpoints=endpoints, inline=inline)
     proto = analyze(cap)
     (outdir / "report.md").write_text(render(proto, str(cap), sha256(cap)))
     (outdir / f"{device}_driver.py").write_text(generate(proto))

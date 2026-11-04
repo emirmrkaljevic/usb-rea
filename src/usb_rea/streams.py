@@ -195,7 +195,7 @@ def _encoded_stream(transfers: list[Transfer], key: tuple, pkts: list[Transfer],
          "first_frames": [f[0].frame for f in frames[:5]], "ack": None}
     s.update({k: froles.get(k, nroles.get(k)) for k in ("count_width", "count_endian")})
     s.update({k: nroles.get(k) for k in ("index_width", "index_endian")})
-    s.update(raw=False, header_packet=None, region=None, length_field=None, byteorder=None,
+    s.update(raw=False, header_packet=None, header_inline=False, region=None, length_field=None, byteorder=None,
              size_alternatives=[], frame_bytes=None, regions=0, channel_order=None, channel_evidence=None)
     _add_ack(s, transfers, key[0], frames, ids)
     s["ids"] = ids
@@ -419,6 +419,59 @@ def _fits(payload: int, n_pkts: int, room: int, size: int) -> bool:
     return payload == size or (size < payload and n_pkts == -(-size // room) and payload - size < room)
 
 
+
+def _region_tries(hl: int) -> list[tuple[str, int, str]]:
+    """Region field layouts to try in a command of hl bytes, most likely first."""
+    tries = [("box10", o, "big") for o in range(hl - 4)]
+    for layout in ("xywh", "box", "wh"):
+        # aligned little-endian fields first: a byte-shifted big-endian reading of small
+        # values can fit the same frames
+        tries += sorted(((layout, o, e) for o in range(hl - 1) for e in ("little", "big")),
+                        key=lambda x: (x[1] % 2, x[2] != "little", x[1]))
+    return tries
+
+
+def _inline_region(runs: list[dict], min_frames: int) -> tuple | None:
+    """A draw command at the start of each frame's first pixel packet (no packet of its own): its
+    region fields give width x height, and the frame's bytes are that many pixels plus the command,
+    the same command length in every frame. Returns (layout, offset, endian, format, got, length)."""
+    if len(runs) < min_frames:
+        return None
+    width = {"box10": 5, "xywh": 8, "box": 8, "wh": 4}
+    for layout, o, e in _region_tries(MAX_HEADER_PKT):
+        for fmt, bpp in RAW.items():
+            got, lens, misses = [], Counter(), 0
+            room = 0.1 * len(runs) + 1   # runs that may miss (frames cut off by the capture)
+            for r in runs:
+                ps = list(r["pkts"])
+                g = _region(layout, ps[0].data, o, e)
+                if not g or not (0 < g[2] <= 4096 and 0 < g[3] <= 4096):
+                    misses += 1
+                    if misses > room:
+                        break
+                    continue
+                pay = sum(len(t.data) for t in ps)
+                hl = pay - g[2] * g[3] * bpp
+                if not o + width[layout] <= hl <= MAX_HEADER_PKT and r["tail"] is not None:
+                    ps.append(r["tail"])
+                    hl += len(r["tail"].data)
+                if o + width[layout] <= hl <= MAX_HEADER_PKT and hl <= len(ps[0].data):
+                    got.append((r, ps, g, hl))
+                    lens[hl] += 1
+                else:
+                    misses += 1
+                    if misses > room:
+                        break
+            if not lens:
+                continue
+            hl, n = lens.most_common(1)[0]
+            got = [(r, ps, g) for r, ps, g, k in got if k == hl]
+            if n >= max(min_frames, 0.9 * len(runs)):
+                if layout == "xywh" and not any(g[0] or g[1] for _, _, g in got):
+                    continue   # x and y always 0: plain width and height fields are the simpler story
+                return layout, o, e, fmt, got, hl
+    return None
+
 def _rgb565_order(pix: bytes) -> str | None:
     """Byte order of RGB565 pixels: the order that makes neighbouring pixels more alike, if clear."""
     n = min(len(pix) // 2, 8192)
@@ -522,13 +575,7 @@ def _raw_stream(transfers: list[Transfer], key: tuple, pkts: list[Transfer], min
         hl, nh = heads.most_common(1)[0]
         headed = [r for r in runs if r["head"] is not None and len(r["head"].data) == hl]
         if nh >= min_frames:
-            tries = [("box10", o, "big") for o in range(hl - 4)]
-            for layout in ("xywh", "box", "wh"):
-                # aligned little-endian fields first: a byte-shifted big-endian reading of small
-                # values can fit the same frames
-                tries += sorted(((layout, o, e) for o in range(hl - 1) for e in ("little", "big")),
-                                key=lambda x: (x[1] % 2, x[2] != "little", x[1]))
-            for layout, o, e in tries:
+            for layout, o, e in _region_tries(hl):
                 for fmt, bpp in RAW.items():
                     got = []
                     for r in headed:
@@ -550,10 +597,15 @@ def _raw_stream(transfers: list[Transfer], key: tuple, pkts: list[Transfer], min
                             break
                 if region:
                     break
+    inline = 0   # length of a draw command sent at the start of the first pixel packet
+    if region is None and h == 0:
+        found = _inline_region(runs, min_frames)
+        if found:
+            region, inline = found[:5], found[5]
     if region:
         layout, o, e, fmt, got = region
         frames = [ps for _, ps, _ in got]
-        heads_used = [r["head"] for r, _, _ in got]
+        heads_used = [] if inline else [r["head"] for r, _, _ in got]
         areas = Counter((g[0], g[1], g[2], g[3]) for _, _, g in got)
         full = max(areas, key=lambda g: (g[2] * g[3], areas[g]))
         size, alts = [full[2], full[3]], []
@@ -576,19 +628,22 @@ def _raw_stream(transfers: list[Transfer], key: tuple, pkts: list[Transfer], min
     used = {id(r["pkts"][0]) for r, _, _ in got}
     partial = [t for r in (runs[0], runs[-1]) if id(r["pkts"][0]) not in used for t in r["pkts"]
                if len(t.data) == chunk]
+    if inline:   # a cut frame still ends with the short rest of its pixels
+        partial += [r["tail"] for r in (runs[0], runs[-1]) if id(r["pkts"][0]) not in used
+                    and r["tail"] is not None and len(r["tail"].data) < chunk]
     ids |= {id(t) for t in partial}
     first, froles = _header(frames, h, True)
     nxt, nroles = _header([f for f in frames if len(f) > 1], h, False)
-    pix = b"".join(t.data[h:] for t in frames[0])[:frame_bytes] if frames else b""
-    full_frames = [f for f in frames if sum(len(t.data) - h for t in f) >= frame_bytes]
+    pix = b"".join(t.data[h:] for t in frames[0])[inline:inline + frame_bytes] if frames else b""
+    full_frames = [f for f in frames if sum(len(t.data) - h for t in f) - inline >= frame_bytes]
     if full_frames:
-        pix = b"".join(t.data[h:] for t in full_frames[0])[:frame_bytes]
+        pix = b"".join(t.data[h:] for t in full_frames[0])[inline:inline + frame_bytes]
     span = frames[-1][0].ts - frames[0][0].ts
     plens = Counter(len(t.data) for f in frames for t in f)
     s = {"endpoint": key[1], "xfer_type": key[2], "format": fmt, "frames": len(frames),
          "packets": len(ids), "partial": len(partial), "chunk": chunk,
          "padded": plens[chunk] >= 0.95 * sum(plens.values()) and any(
-             sum(len(t.data) - h for t in f) > frame_bytes for f in frames),
+             sum(len(t.data) - h for t in f) - inline > frame_bytes for f in frames),
          "header_len": h, "first_header": first if h else "", "next_header": nxt if h else "",
          "count_offset": froles.get("count", nroles.get("count")),
          "index_offset": nroles.get("index"), "index_base": nroles.get("index_base"),
@@ -597,16 +652,16 @@ def _raw_stream(transfers: list[Transfer], key: tuple, pkts: list[Transfer], min
          "count_endian": froles.get("count_endian", nroles.get("count_endian")),
          "index_width": nroles.get("index_width"), "index_endian": nroles.get("index_endian"),
          "packets_per_frame": [min(map(len, frames)), max(map(len, frames))],
-         "image_bytes": [min(sum(len(t.data) - h for t in f) for f in frames),
-                         max(sum(len(t.data) - h for t in f) for f in frames)],
+         "image_bytes": [min(sum(len(t.data) - h for t in f) for f in frames) - inline,
+                         max(sum(len(t.data) - h for t in f) for f in frames) - inline],
          "size": size, "size_alternatives": alts, "frame_bytes": frame_bytes, "regions": n_regions,
          "fps": round((len(frames) - 1) / span, 1) if span > 0 else None,
          "first_frames": [f[0].frame for f in frames[:5]], "ack": None, "raw": True,
          "byteorder": _rgb565_order(pix) if fmt == "rgb565" else None,
-         "header_packet": None, "region": None, "length_field": None}
-    s.update(_channel_order(full_frames, h, fmt, frame_bytes, s["byteorder"]))
-    if heads_used:
-        hd = [t.data for t in heads_used]
+         "header_packet": None, "header_inline": bool(inline), "region": None, "length_field": None}
+    s.update(_channel_order(full_frames, h, fmt, frame_bytes, s["byteorder"], skip=inline))
+    if heads_used or inline:
+        hd = [f[0].data[:inline] for f in frames] if inline else [t.data for t in heads_used]
         hl = len(hd[0])
         tokens: list[str | None] = [None] * hl
         if region:
@@ -618,7 +673,7 @@ def _raw_stream(transfers: list[Transfer], key: tuple, pkts: list[Transfer], min
                     tokens[o + 2 * i:o + 2 * i + 2] = [name, name]
             s["region"] = {"layout": layout, "offset": o, "endian": e}
         # a 16- or 32-bit field holding the frame's byte count
-        pays = [sum(len(t.data) - h for t in f) for f in frames]
+        pays = [sum(len(t.data) - h for t in f) - inline for f in frames]
         for width in (4, 2):
             for j in range(hl - width + 1):
                 if s["length_field"] or any(tokens[j:j + width]):
@@ -716,7 +771,7 @@ def _is_testcard(fmt: str, pix: bytes, order: str, endian: str | None, n: int) -
 
 
 def _channel_order(frames: list[list[Transfer]], h: int, fmt: str, frame_bytes: int,
-                   byteorder: str | None, max_frames: int = 600) -> dict:
+                   byteorder: str | None, max_frames: int = 600, skip: int = 0) -> dict:
     """`channel_order` ('rgb', 'bgr' or None for unknown) and the evidence: full frames that show
     the test card under exactly one reading of the pixels. For RGB565 the test card also settles the
     byte order (`byteorder` is replaced when the pixel smoothness guess disagreed). Confidence is
@@ -726,7 +781,7 @@ def _channel_order(frames: list[list[Transfer]], h: int, fmt: str, frame_bytes: 
     checked = 0
     # a long video is checked at an even stride (a card shown for a few seconds is still hit)
     for f in frames[::max(1, -(-len(frames) // max_frames))]:
-        pix = b"".join(t.data[h:] for t in f)[:frame_bytes]
+        pix = b"".join(t.data[h:] for t in f)[skip:skip + frame_bytes]
         checked += 1
         # a quick look at a few pixels first, the full sample only for likely frames
         quick = [r for r in _readings(fmt) if _is_testcard(fmt, pix, *r, 64)]

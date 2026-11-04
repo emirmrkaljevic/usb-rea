@@ -268,7 +268,7 @@ def make_capture(path, actions: list[str] | None = None, transport: str = "bulk"
                  states: bool = False, image_stream: bool = False, fps: float = 20.0,
                  raw: str | None = None, testcard: str | None = None,
                  endpoints: str | None = None, reported: bool = False,
-                 switch: bool = False) -> tuple[Path, Path]:
+                 switch: bool = False, inline: bool = False) -> tuple[Path, Path]:
     """Write <path> (pcap) and <path>.actions.json. Returns both paths.
 
     poll: if > 0, the "vendor app" also sends a status request every `poll` seconds on the
@@ -311,6 +311,10 @@ def make_capture(path, actions: list[str] | None = None, transport: str = "bulk"
     (100, 8); ack 55 AA 82 00 on EP 0x82. 'rgb888': a 128x160 screen at 5 fps with no command, 64-byte
     packets each starting with the packet index and count as u16 LE (1024 packets a frame).
 
+    inline: (rgb565) the draw command has no packet of its own: it is the first 12 bytes of the
+    frame's first 512-byte packet and the pixels follow right after it (so a full frame ends with a
+    12-byte packet).
+
     endpoints: (image streams) spread each frame over more than one host->device endpoint, as some
     screens take it. 'alternate': the frame's packets alternate between two data endpoints (JPEG on
     interrupt EP 0x03 and 0x05, raw pixels on bulk EP 0x02 and 0x04, the draw command first on the
@@ -338,6 +342,8 @@ def make_capture(path, actions: list[str] | None = None, transport: str = "bulk"
     if endpoints not in (None, "alternate", "blocks", "command") or (endpoints and not image_stream) \
             or (endpoints == "command" and raw != "rgb565"):
         raise ValueError("endpoints is 'alternate', 'blocks' or 'command' (rgb565 only) and needs image_stream=True")
+    if inline and (raw != "rgb565" or endpoints):
+        raise ValueError("inline needs raw='rgb565' on one endpoint")
     if device == "fan":
         actions = actions or (FAN_STATE_ACTIONS if states else FAN_REPORTED_ACTIONS if reported
                               else FAN_SWITCH_ACTIONS if switch else FAN_ACTIONS)
@@ -479,7 +485,11 @@ def make_capture(path, actions: list[str] | None = None, transport: str = "bulk"
             if raw == "rgb565":
                 x, y, wd, ht = (100, 8, 48, 16) if n % 4 == 3 else (0, 0, 160, 128)
                 pix = encode_testcard(160, 128, 2, testcard) if card else gradient(wd, ht, n)
-                pkts = [raw_header(x, y, wd, ht)] + [pix[i:i + 512] for i in range(0, len(pix), 512)]
+                if inline:
+                    data = raw_header(x, y, wd, ht) + pix
+                    pkts = [data[i:i + 512] for i in range(0, len(data), 512)]
+                else:
+                    pkts = [raw_header(x, y, wd, ht)] + [pix[i:i + 512] for i in range(0, len(pix), 512)]
             else:
                 pkts = raw888_packets(encode_testcard(128, 160, 3, testcard) if card else gradient(128, 160, n, bpp=3))
             eps = _stream_endpoints(endpoints, len(pkts), (0x02, 0x04), raw == "rgb565")

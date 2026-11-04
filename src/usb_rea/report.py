@@ -101,8 +101,10 @@ def _streams(proto: Protocol) -> list[str]:
         if s.get("raw"):
             intro = (f"Raw {s['format'].upper()} pixels sent continuously (a picture or video for a screen, no "
                      "image file format): runs of large packets with no pause between them whose payload is "
-                     "exactly a common screen size" + (" or the screen region the command packet before them "
-                     "names" if s.get("region") else "") + ". ")
+                     "exactly a common screen size" + (
+                         " plus the command at their start, which names the screen region" if s.get("header_inline")
+                         else " or the screen region the command packet before them names" if s.get("region")
+                         else "") + ". ")
         else:
             intro = (f"{s['format'].upper()} images sent continuously (a picture or video for a screen): each "
                      "frame starts with a packet that holds the image's start marker and runs until its end "
@@ -171,7 +173,9 @@ def _streams(proto: Protocol) -> list[str]:
             L.append("- No per-packet header: the image bytes are sent as they are")
         if s.get("header_packet"):
             lf = s.get("length_field")
-            L.append(f"- Command packet before each frame: `{s['header_packet']}` (`xx`/`yy` = position, `ww`/`hh` = "
+            where = (f"- Command at the start of each frame's first packet ({len(s['header_packet'].split())} bytes, "
+                     "the pixels follow in the same packet)") if s.get("header_inline") else "- Command packet before each frame"
+            L.append(f"{where}: `{s['header_packet']}` (`xx`/`yy` = position, `ww`/`hh` = "
                      "size, `ex`/`ey` = end position, `rr` = packed region, `ll` = byte count" + (
                          f" as {8 * lf['width']}-bit {lf['endian']}-endian" if lf else "") + ", `??` = varies)")
         if s["ack"]:
