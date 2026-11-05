@@ -99,7 +99,7 @@ def build():
         `switches` lists actions where the app sent a state command first (`enter`) and maybe again
         after (`restore`: "previous", a value or null); that command's packets are kept out of the
         action, which carries the same `switch`.
-        `streams` lists continuous image streams to a screen (JPEG/PNG/GIF, or raw RGB565/RGB888 pixels
+        `streams` lists continuous image streams to a screen (JPEG/PNG/GIF/BMP, or raw RGB565/RGB888 pixels
         found by size with `raw` true): endpoint, `endpoints` (every host->device endpoint the frame bytes
         go to, with `endpoint_layout` 'alternate' or 'blocks' when there are several) and
         `header_endpoint` (where the draw command goes, when not with the pixels), format, frame and packet counts, chunk size, per-packet

@@ -259,7 +259,7 @@ SEND_IMAGE = '''
         """Send one picture the way the vendor app streamed it and return the device's ack (None when
         the capture had none). Call it again for every frame of a video.
 
-        Encoded stream (STREAMS format jpeg, png or gif): pass the image file bytes at the captured
+        Encoded stream (STREAMS format jpeg, png, gif or bmp): pass the image file bytes at the captured
         size; they are cut into chunks behind the captured per-packet header (count and index filled
         in), the last chunk padded if the app padded it.
         Raw stream (rgb565, rgb888): pass a Pillow image (converted to the stream's pixel format, byte
@@ -275,7 +275,7 @@ SEND_IMAGE = '''
                 raise ValueError(f"this screen takes whole {st['size'][0]}x{st['size'][1]} frames")
         else:
             image = bytes(image)
-            magic = {"jpeg": b"\\xff\\xd8\\xff", "png": b"\\x89PNG", "gif": b"GIF8"}[st["format"]]
+            magic = {"jpeg": b"\\xff\\xd8\\xff", "png": b"\\x89PNG", "gif": b"GIF8", "bmp": b"BM"}[st["format"]]
             if not image.startswith(magic):
                 raise ValueError(f"the app streamed {st['format']} images; this does not start like one")
         hl = st["header_len"]

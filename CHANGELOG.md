@@ -1,6 +1,10 @@
 # Changelog
 
 ## Unreleased
+- image streams: Windows BMP frames (`BM` magic, `bfSize` frame length, width/height from
+  BITMAPINFOHEADER including top-down negative height) are found the same way as JPEG/PNG/GIF;
+  `send_image()` accepts BMP file bytes. Synth: `make_capture(..., image_stream=True, bmp=True)`;
+  `usb-rea demo --device lcd --bmp`.
 - docs: ASUS TUF Gaming LC III LCD case study from the trimmed real USBPcap fixture
   (`docs/case-study-asus-tuf-lc3.md`), linked from VALIDATION and README.
 

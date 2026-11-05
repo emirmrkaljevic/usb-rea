@@ -6,9 +6,9 @@ frame an encoded image cut into chunks behind a small per-packet header. Diffed 
 traffic drowns the real commands (brightness, orientation) sent on another endpoint.
 
 A stream is a host->device channel (bulk or interrupt) where at least `min_frames` packets start
-an image (JPEG FF D8 FF, PNG 89 50 4E 47 0D 0A 1A 0A, GIF 'GIF8') at the same offset. That offset
+an image (JPEG FF D8 FF, PNG 89 50 4E 47 0D 0A 1A 0A, GIF 'GIF8', BMP 'BM') at the same offset. That offset
 is the per-packet header length. A frame runs from its start packet until the image end marker
-(JPEG FF D9, PNG IEND), the next start or a pause of a second; its packets are set aside.
+(JPEG FF D9, PNG IEND), the BMP bfSize byte count, the next start or a pause of a second; its packets are set aside.
 Header bytes are described as constant, `nn` (the number of packets in the frame) or `ii` (the
 packet's index in the frame), and a device->host message of fixed content sent about once per
 frame is recorded as the per-frame ack.
@@ -21,17 +21,22 @@ from collections import Counter
 
 from .model import Transfer
 
-MAGIC = {"jpeg": b"\xff\xd8\xff", "png": b"\x89PNG\r\n\x1a\n", "gif": b"GIF8"}
+MAGIC = {"jpeg": b"\xff\xd8\xff", "png": b"\x89PNG\r\n\x1a\n", "gif": b"GIF8", "bmp": b"BM"}
 END = {"jpeg": b"\xff\xd9", "png": b"IEND\xaeB`\x82"}
 MAX_HEADER = 32
 
 
 def _size(fmt: str, img: bytes) -> tuple[int, int] | None:
-    """(width, height) from a JPEG SOF marker, the PNG IHDR or the GIF screen descriptor."""
+    """(width, height) from a JPEG SOF marker, the PNG IHDR, the GIF screen descriptor or BMP BITMAPINFOHEADER."""
     if fmt == "png" and len(img) >= 24:
         return int.from_bytes(img[16:20], "big"), int.from_bytes(img[20:24], "big")
     if fmt == "gif" and len(img) >= 10:
         return int.from_bytes(img[6:8], "little"), int.from_bytes(img[8:10], "little")
+    if fmt == "bmp" and len(img) >= 26:
+        w = int.from_bytes(img[18:22], "little", signed=True)
+        h = abs(int.from_bytes(img[22:26], "little", signed=True))
+        if w > 0 and h > 0:
+            return w, h
     if fmt == "jpeg":
         i = 2
         while i + 9 < len(img) and img[i] == 0xFF:
@@ -44,7 +49,14 @@ def _size(fmt: str, img: bytes) -> tuple[int, int] | None:
 
 def _ended(fmt: str, buf: bytes) -> int | None:
     """Length of the image in buf once its end marker arrived (JPEG: as many FF D9 as FF D8 FF, so an
-    embedded thumbnail does not end the frame), else None."""
+    embedded thumbnail does not end the frame; BMP: the bfSize field at offset 2), else None."""
+    if fmt == "bmp":
+        if len(buf) < 6:
+            return None
+        size = int.from_bytes(buf[2:6], "little")
+        if size < 14:
+            return None
+        return size if len(buf) >= size else None
     end = END.get(fmt)
     if end is None:
         return None
@@ -136,7 +148,7 @@ def find_streams(transfers: list[Transfer], min_frames: int = 3) -> list[dict]:
 
 
 def _encoded_stream(transfers: list[Transfer], key: tuple, pkts: list[Transfer], min_frames: int) -> dict | None:
-    """A JPEG/PNG/GIF stream on these packets (one channel, or several merged by time), or None."""
+    """A JPEG/PNG/GIF/BMP stream on these packets (one channel, or several merged by time), or None."""
     best = None
     for fmt, magic in MAGIC.items():
         offs = Counter(t.data.find(magic) for t in pkts)

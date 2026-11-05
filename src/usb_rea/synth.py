@@ -15,7 +15,8 @@ Devices (VID 0x1234 / PID 0xABCD):
         EP 0x01. With image_stream=True the vendor app also streams a 240x240 JPEG video on interrupt
         EP 0x03 the whole time (see lcd_frames): 512-byte packets, header 08 <packets> 00 80 on the
         first packet of a frame and 08 <index> 00 00 on the rest, the last one zero padded; the
-        device answers each frame with 08 81 + 14 zero bytes on EP 0x84
+        device answers each frame with 08 81 + 14 zero bytes on EP 0x84. With bmp=True it streams
+        64x64 BMP frames the same way instead of JPEG.
 """
 from __future__ import annotations
 import json
@@ -196,6 +197,20 @@ def fake_jpeg(n: int, size: int = 240, seed: int = 0) -> bytes:
     return head + body + b"\xff\xd9"
 
 
+def fake_bmp(n: int, size: int = 64, seed: int = 0, top_down: bool = False) -> bytes:
+    """A BMP-shaped image: BITMAPFILEHEADER + BITMAPINFOHEADER + pixel bytes.
+    bfSize matches the returned length; biWidth/biHeight are `size` (negative height if top_down).
+    Not a full photo, but every field the stream detector reads is where a real encoder puts it."""
+    rnd = random.Random(seed)
+    bf_off = 54
+    n = max(n, bf_off + 4)
+    height = -size if top_down else size
+    body = bytes(rnd.randrange(0, 256) for _ in range(n - bf_off))
+    hdr = struct.pack("<2sIHHI", b"BM", n, 0, 0, bf_off)
+    info = struct.pack("<IiiHHIIiiII", 40, size, height, 1, 24, 0, len(body), 2835, 2835, 0, 0)
+    return hdr + info + body
+
+
 def lcd_frames(image: bytes, chunk: int = 512) -> list[bytes]:
     """Packets for one frame: header 08 <count> 00 80, then 08 <index> 00 00; last one padded."""
     room = chunk - 4
@@ -268,7 +283,7 @@ def make_capture(path, actions: list[str] | None = None, transport: str = "bulk"
                  states: bool = False, image_stream: bool = False, fps: float = 20.0,
                  raw: str | None = None, testcard: str | None = None,
                  endpoints: str | None = None, reported: bool = False,
-                 switch: bool = False, inline: bool = False) -> tuple[Path, Path]:
+                 switch: bool = False, inline: bool = False, bmp: bool = False) -> tuple[Path, Path]:
     """Write <path> (pcap) and <path>.actions.json. Returns both paths.
 
     poll: if > 0, the "vendor app" also sends a status request every `poll` seconds on the
@@ -303,6 +318,7 @@ def make_capture(path, actions: list[str] | None = None, transport: str = "bulk"
     image_stream: (lcd) the vendor app streams a JPEG video to the screen at `fps` frames per second
     for the whole capture (frames of 1.5 to 4 KB, so 3 to 8 packets each, the first one cut off by
     the start of the capture), with an ack from the device after each frame.
+    bmp: (lcd with image_stream, not raw) stream 64x64 BMP frames the same way instead of JPEG.
     testcard: (raw streams) 'rgb' or 'bgr': frames 4 to 11 (but not the clock redraws) show the
     usb-rea test card encoded in that channel order, as when the user put it on the screen.
     raw: (lcd with image_stream) stream raw pixels instead of JPEG on bulk EP 0x02. 'rgb565': a
@@ -335,6 +351,8 @@ def make_capture(path, actions: list[str] | None = None, transport: str = "bulk"
         poll, observe = poll or 0.25, True
     if image_stream and device != "lcd":
         raise ValueError("only the synthetic lcd streams images")
+    if bmp and (not image_stream or raw):
+        raise ValueError("bmp needs image_stream=True and no raw pixels")
     if raw not in (None, "rgb565", "rgb888") or (raw and not image_stream):
         raise ValueError("raw is 'rgb565' or 'rgb888' and needs image_stream=True")
     if testcard not in (None, "rgb", "bgr") or (testcard and not raw):
@@ -507,7 +525,9 @@ def make_capture(path, actions: list[str] | None = None, transport: str = "bulk"
         video = random.Random(seed + 2)
         tf, n = 1_760_000_000.0 + 0.02, 0
         while tf < t:
-            pkts = lcd_frames(fake_jpeg(video.randint(1500, 4000), seed=seed * 1000 + n))
+            img = (fake_bmp(video.randint(1500, 4000), seed=seed * 1000 + n) if bmp
+                   else fake_jpeg(video.randint(1500, 4000), seed=seed * 1000 + n))
+            pkts = lcd_frames(img)
             eps = _stream_endpoints(endpoints, len(pkts), (0x03, 0x05), False)
             if n == 0:   # the capture started in the middle of a frame
                 pkts, eps = pkts[2:], eps[2:]

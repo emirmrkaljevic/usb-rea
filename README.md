@@ -66,7 +66,7 @@ level        100%  0xa5 | 0x02 | bits[0:4] = round(value * 1 + 0) | 0x00 | sum8(
 | modes / enum values (`seen mode silent`, `seen mode turbo`) | byte 5 `mode: 0x00 = silent, 0x02 = turbo`, or `bits[4:6] profile: …` beside flags |
 | signed readings, when the app shows negative values (`seen temp -5`) | byte 4 `i8 temp = raw`, bytes 2-3 `i16be …` |
 | handshake: messages sent once when the app opens the device, session tokens | step 2 bytes 3-6 = bytes 2-5 of the reply to step 1 |
-| image streams to a screen, kept apart from the commands | JPEG on EP 0x03, header `08 nn 00 80` then `08 ii 00 00`, ack `08 81` per frame |
+| image streams to a screen, kept apart from the commands | JPEG/PNG/GIF/BMP on EP 0x03, header `08 nn 00 80` then `08 ii 00 00`, ack `08 81` per frame |
 | raw pixel streams (RGB565/RGB888), found by size and by the region the draw command names | 320x480 RGB565 LE after `rr rr rr rr rr c5` (Turing Smart Screen rev A) |
 
 Linear fits must survive leave-one-out cross-checks; otherwise usb-rea falls back to an honest lookup table and says so.
@@ -260,23 +260,25 @@ Devices with a screen (AIO pump caps, keyboards and stream decks with an LCD) of
 a whole video from the vendor app the entire time you click around: tens of thousands of large
 packets on one endpoint. Diffed as actions, that traffic buries the few real commands, so a
 brightness change gets read as "byte 1 of the video". usb-rea first looks for host→device channels
-where packets start an image (JPEG `FF D8 FF`, PNG, GIF) at the same offset in at least 3 frames.
+where packets start an image (JPEG `FF D8 FF`, PNG, GIF, BMP `BM`) at the same offset in at least 3 frames.
 That offset is the per-packet header; a frame runs until the image's end marker (JPEG `FF D9`, with
-embedded thumbnails counted, PNG `IEND`), the next start or a pause. Each header byte is described
+embedded thumbnails counted, PNG `IEND`), the BMP `bfSize` byte count, the next start or a pause. Each header byte is described
 as constant, `nn` (packets in the frame) or `ii` (the packet's index), chunks cut off at the start
 of the capture are recognised by that header, and a fixed device→host message sent about once per
 frame is the ack. All of it is set aside before background polls, handshakes and actions are
 analysed, so the commands come from the remaining traffic.
 
 The report gets an "Image stream" section (endpoint, format, frames, packets per frame, image size
-read from the JPEG SOF / PNG IHDR, frame rate, chunk size and padding, header pattern, ack), the MCP
-`diff_actions` output has `streams`, and the generated driver gets `send_image(jpeg_bytes)`, which
-cuts an image into chunks behind the captured header, fills in the count and index bytes, pads the
-last chunk and returns the ack. The synthetic LCD streams a 240x240 JPEG video at 20 frames per
-second next to its brightness command (`make_capture(..., device="lcd", image_stream=True)`, used by
-`usb-rea demo --device lcd`). On a real AIO pump LCD capture (75,788 image packets, 8,670 frames of
-a 320x320 JPEG, four brightness writes on another endpoint) this turns a wrong "brightness" made of
-video bytes into the right one: byte 4 = percent on EP 0x01.
+read from the JPEG SOF / PNG IHDR / GIF screen descriptor / BMP BITMAPINFOHEADER, frame rate, chunk
+size and padding, header pattern, ack), the MCP `diff_actions` output has `streams`, and the generated
+driver gets `send_image(jpeg_bytes)` (or PNG/GIF/BMP file bytes), which cuts an image into chunks
+behind the captured header, fills in the count and index bytes, pads the last chunk and returns the
+ack. The synthetic LCD streams a 240x240 JPEG video at 20 frames per second next to its brightness
+command (`make_capture(..., device="lcd", image_stream=True)`, used by `usb-rea demo --device lcd`),
+or 64x64 BMP frames with `bmp=True` / `usb-rea demo --device lcd --bmp`. On a real AIO pump LCD
+capture (75,788 image packets, 8,670 frames of a 320x320 JPEG, four brightness writes on another
+endpoint) this turns a wrong "brightness" made of video bytes into the right one: byte 4 = percent
+on EP 0x01.
 
 Raw pixel streams have no magic bytes, so they are found by size. Many cheap case and AIO screens
 take plain RGB565 (2 bytes a pixel) or RGB888 (3 bytes) behind a short draw command. On one
@@ -403,7 +405,7 @@ usb-rea hid capture.pcapng --decode "10ff0d1d000000" --type Output
 - [x] validation against documented protocols (liquidctl, rivalcfg)
 - [x] HID report descriptor decoding (`usb-rea hid`), with captured commands mapped to their HID reports
 - [ ] emulated-device CI (dummy_hcd + configfs HID; script in `scripts/gadget_e2e.sh`)
-- [ ] real-hardware case studies
+- [x] real-hardware case studies (ASUS TUF LC III LCD, Corsair Hydro Platinum)
 - [x] multi-packet transactions (write + apply), including checksums over earlier packets
 - [x] background traffic: periodic status polls / keep-alives are detected and ignored
 - [x] device responses: replies to commands, background polls and GET_REPORT decoded, `query_*()` driver methods
@@ -417,7 +419,7 @@ usb-rea hid capture.pcapng --decode "10ff0d1d000000" --type Output
 - [x] handshake branches: the next steps chosen by a byte of the device's reply, replayed by the driver from the live reply
 - [x] state preconditions: commands the app only sent after a mode command chose one value, set first by the driver
 - [x] states read from device replies and mode switches inside an action, both replayed by the driver
-- [x] image streams: JPEG/PNG/GIF frames sent to a screen are kept apart from the commands, `send_image()` in the driver
+- [x] image streams: JPEG/PNG/GIF/BMP frames sent to a screen are kept apart from the commands, `send_image()` in the driver
 - [x] raw pixel streams (RGB565/RGB888 without an image header) and 16-bit header fields
 - [x] RGB or BGR channel order (and RGB565 byte order) from frames showing the `usb-rea testcard` picture
 - [x] image streams split over several endpoints (alternating, in blocks, or a draw command on the command endpoint)
