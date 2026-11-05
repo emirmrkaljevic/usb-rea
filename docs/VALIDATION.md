@@ -9,6 +9,7 @@ usb-rea is validated without anyone's hardware in four ways. All of them run in 
 | liquidctl Kraken X (1e71:170e) | recovers `02 4d <channel> 00 <duty>` exactly as liquidctl's `kraken2.py` builds it | `tests/test_validation.py` |
 | rivalcfg Rival 100 (1038:1702) | recovers non-linear DPI/polling lookup tables and RGB color as in rivalcfg's `rival100.py` | `tests/test_validation.py` |
 | liquidctl Hydro H100i Platinum (1b1c:0c18) | recovers prefix, sequence counter (+8), duty scale, pump mode and CRC8 as in `hydro_platinum.py`; [case study](case-study-hydro-platinum.md) | `tests/test_case_hydro_platinum.py` |
+| ASUS TUF Gaming LC III LCD (0b05:1c7b) | real USBPcap capture: brightness on EP 0x01 (byte 4 = percent), 320x320 JPEG stream on EP 0x03 with `08 nn 00 80` / `08 ii 00 00`, ack `08 81` on EP 0x84, VID:PID from USBPcap stage-3 GET_DESCRIPTOR; [case study](case-study-asus-tuf-lc3.md) | `tests/test_user_capture_lc3.py` |
 | CRC catalogue | CRC8/CRC16 variants match the standard `123456789` check values | `tests/test_checksums.py` |
 | Wireshark dissector | generated Lua plugin labels every command in tshark 4.4, values match, checksums verify, a corrupted checksum is flagged; Lua checksum helpers match the Python ones | `tests/test_dissector.py` |
 | Real captures | parser handles public usbmon/USBPcap captures (downloaded on demand) | `tests/test_public_pcaps.py` |

@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+- docs: ASUS TUF Gaming LC III LCD case study from the trimmed real USBPcap fixture
+  (`docs/case-study-asus-tuf-lc3.md`), linked from VALIDATION and README.
+
 ## v0.7.10 (2026-11-04)
 Raw screen streams whose draw command starts the first pixel packet.
 - raw image streams whose draw command is the start of the frame's first pixel packet (no packet of
