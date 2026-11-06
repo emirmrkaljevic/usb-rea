@@ -1,6 +1,9 @@
 # Changelog
 
 ## Unreleased
+
+## v0.7.11 (2026-11-06)
+BMP and WebP image streams, plus ASUS TUF LC III LCD case study docs.
 - image streams: WebP frames (`RIFF....WEBP` magic, RIFF chunk size for frame length, width/height from
   VP8X canvas or VP8L/VP8 bitstream) are found the same way as JPEG/PNG/GIF/BMP;
   `send_image()` accepts WebP file bytes. Synth: `make_capture(..., image_stream=True, webp=True)`;
