@@ -61,6 +61,8 @@ def main(argv=None) -> int:
                    help="with --raw rgb565: the draw command starts the first pixel packet instead of its own packet")
     d.add_argument("--bmp", action="store_true",
                    help="lcd only: stream BMP frames instead of a JPEG video")
+    d.add_argument("--webp", action="store_true",
+                   help="lcd only: stream WebP frames instead of a JPEG video")
     tc = sub.add_parser("testcard", help="write the test card picture; show it on the screen while "
                         "capturing so the report can tell RGB from BGR")
     tc.add_argument("-o", "--out", default="usb-rea-testcard.png")
@@ -121,7 +123,13 @@ def main(argv=None) -> int:
             p.error("--bmp needs --device lcd")
         if a.bmp and a.raw:
             p.error("--bmp cannot be used with --raw")
-        return _demo(Path(a.outdir), a.device, a.raw, a.testcard, a.endpoints, a.inline, a.bmp)
+        if a.webp and a.device != "lcd":
+            p.error("--webp needs --device lcd")
+        if a.webp and a.raw:
+            p.error("--webp cannot be used with --raw")
+        if a.bmp and a.webp:
+            p.error("--bmp and --webp cannot be used together")
+        return _demo(Path(a.outdir), a.device, a.raw, a.testcard, a.endpoints, a.inline, a.bmp, a.webp)
     if a.cmd == "testcard":
         from .streams import write_testcard
         try:
@@ -198,7 +206,8 @@ def _hid(a) -> int:
 
 
 def _demo(outdir: Path, device: str = "lamp", raw: str | None = None, testcard: str | None = None,
-          endpoints: str | None = None, inline: bool = False, bmp: bool = False) -> int:
+          endpoints: str | None = None, inline: bool = False, bmp: bool = False,
+          webp: bool = False) -> int:
     from .synth import make_capture
     from .pipeline import analyze, sha256
     from .report import render
@@ -211,11 +220,11 @@ def _demo(outdir: Path, device: str = "lamp", raw: str | None = None, testcard: 
     # its app only sets a color in mode 3, which the driver then does first
     # the lcd's app streams a JPEG video to the screen the whole time, which is set apart from brightness
     # (with --raw it sends raw pixels instead, behind a draw command that names the screen region;
-    # with --bmp it streams BMP frames instead of JPEG)
+    # with --bmp/--webp it streams BMP or WebP frames instead of JPEG)
     cap, _ = make_capture(outdir / f"{device}.pcap", device=device, poll=0.5 if device == "fan" else 0.0,
                           observe=device == "fan", handshake=device == "fan", branch=device == "fan",
                           states=device == "fan", image_stream=device == "lcd", raw=raw,
-                          testcard=testcard, endpoints=endpoints, inline=inline, bmp=bmp)
+                          testcard=testcard, endpoints=endpoints, inline=inline, bmp=bmp, webp=webp)
     proto = analyze(cap)
     (outdir / "report.md").write_text(render(proto, str(cap), sha256(cap)))
     (outdir / f"{device}_driver.py").write_text(generate(proto))

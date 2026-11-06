@@ -6,9 +6,9 @@ frame an encoded image cut into chunks behind a small per-packet header. Diffed 
 traffic drowns the real commands (brightness, orientation) sent on another endpoint.
 
 A stream is a host->device channel (bulk or interrupt) where at least `min_frames` packets start
-an image (JPEG FF D8 FF, PNG 89 50 4E 47 0D 0A 1A 0A, GIF 'GIF8', BMP 'BM') at the same offset. That offset
+an image (JPEG FF D8 FF, PNG 89 50 4E 47 0D 0A 1A 0A, GIF 'GIF8', BMP 'BM', WebP RIFF....WEBP) at the same offset. That offset
 is the per-packet header length. A frame runs from its start packet until the image end marker
-(JPEG FF D9, PNG IEND), the BMP bfSize byte count, the next start or a pause of a second; its packets are set aside.
+(JPEG FF D9, PNG IEND), the BMP bfSize or WebP RIFF chunk size byte count, the next start or a pause of a second; its packets are set aside.
 Header bytes are described as constant, `nn` (the number of packets in the frame) or `ii` (the
 packet's index in the frame), and a device->host message of fixed content sent about once per
 frame is recorded as the per-frame ack.
@@ -21,13 +21,13 @@ from collections import Counter
 
 from .model import Transfer
 
-MAGIC = {"jpeg": b"\xff\xd8\xff", "png": b"\x89PNG\r\n\x1a\n", "gif": b"GIF8", "bmp": b"BM"}
+MAGIC = {"jpeg": b"\xff\xd8\xff", "png": b"\x89PNG\r\n\x1a\n", "gif": b"GIF8", "bmp": b"BM", "webp": b"RIFF"}
 END = {"jpeg": b"\xff\xd9", "png": b"IEND\xaeB`\x82"}
 MAX_HEADER = 32
 
 
 def _size(fmt: str, img: bytes) -> tuple[int, int] | None:
-    """(width, height) from a JPEG SOF marker, the PNG IHDR, the GIF screen descriptor or BMP BITMAPINFOHEADER."""
+    """(width, height) from a JPEG SOF marker, the PNG IHDR, the GIF screen descriptor, BMP BITMAPINFOHEADER or WebP VP8X/VP8L/VP8."""
     if fmt == "png" and len(img) >= 24:
         return int.from_bytes(img[16:20], "big"), int.from_bytes(img[20:24], "big")
     if fmt == "gif" and len(img) >= 10:
@@ -37,6 +37,30 @@ def _size(fmt: str, img: bytes) -> tuple[int, int] | None:
         h = abs(int.from_bytes(img[22:26], "little", signed=True))
         if w > 0 and h > 0:
             return w, h
+    if fmt == "webp" and len(img) >= 16 and img[8:12] == b"WEBP":
+        # VP8X canvas size, else first VP8L or VP8 bitstream chunk
+        i = 12
+        while i + 8 <= len(img):
+            tag, n = img[i:i + 4], int.from_bytes(img[i + 4:i + 8], "little")
+            data, nxt = img[i + 8:i + 8 + n], i + 8 + n + (n & 1)  # RIFF pads odd chunks
+            if tag == b"VP8X" and len(data) >= 10:
+                w = int.from_bytes(data[4:7], "little") + 1
+                h = int.from_bytes(data[7:10], "little") + 1
+                if w > 0 and h > 0:
+                    return w, h
+            if tag == b"VP8L" and len(data) >= 5 and data[0] == 0x2F:
+                bits = int.from_bytes(data[1:5], "little")
+                w, h = (bits & 0x3FFF) + 1, ((bits >> 14) & 0x3FFF) + 1
+                if w > 0 and h > 0:
+                    return w, h
+            if tag == b"VP8 " and len(data) >= 10 and data[3:6] == b"\x9d\x01\x2a":
+                w = int.from_bytes(data[6:8], "little") & 0x3FFF
+                h = int.from_bytes(data[8:10], "little") & 0x3FFF
+                if w > 0 and h > 0:
+                    return w, h
+            if n < 0 or nxt <= i:
+                break
+            i = nxt
     if fmt == "jpeg":
         i = 2
         while i + 9 < len(img) and img[i] == 0xFF:
@@ -49,12 +73,21 @@ def _size(fmt: str, img: bytes) -> tuple[int, int] | None:
 
 def _ended(fmt: str, buf: bytes) -> int | None:
     """Length of the image in buf once its end marker arrived (JPEG: as many FF D9 as FF D8 FF, so an
-    embedded thumbnail does not end the frame; BMP: the bfSize field at offset 2), else None."""
+    embedded thumbnail does not end the frame; BMP: the bfSize field at offset 2; WebP: RIFF chunk size + 8), else None."""
     if fmt == "bmp":
         if len(buf) < 6:
             return None
         size = int.from_bytes(buf[2:6], "little")
         if size < 14:
+            return None
+        return size if len(buf) >= size else None
+    if fmt == "webp":
+        if len(buf) < 12:
+            return None
+        if buf[8:12] != b"WEBP":
+            return None
+        size = int.from_bytes(buf[4:8], "little") + 8
+        if size < 12:
             return None
         return size if len(buf) >= size else None
     end = END.get(fmt)
@@ -148,12 +181,14 @@ def find_streams(transfers: list[Transfer], min_frames: int = 3) -> list[dict]:
 
 
 def _encoded_stream(transfers: list[Transfer], key: tuple, pkts: list[Transfer], min_frames: int) -> dict | None:
-    """A JPEG/PNG/GIF/BMP stream on these packets (one channel, or several merged by time), or None."""
+    """A JPEG/PNG/GIF/BMP/WebP stream on these packets (one channel, or several merged by time), or None."""
     best = None
     for fmt, magic in MAGIC.items():
-        offs = Counter(t.data.find(magic) for t in pkts)
-        offs.pop(-1, None)
-        offs = Counter({o: n for o, n in offs.items() if o <= MAX_HEADER})
+        offs = Counter()
+        for t in pkts:
+            o = t.data.find(magic)
+            if 0 <= o <= MAX_HEADER and (fmt != "webp" or (o + 12 <= len(t.data) and t.data[o + 8:o + 12] == b"WEBP")):
+                offs[o] += 1
         if offs:
             h, n = offs.most_common(1)[0]
             if n >= min_frames and (best is None or n > best[2]):
@@ -162,7 +197,8 @@ def _encoded_stream(transfers: list[Transfer], key: tuple, pkts: list[Transfer],
         return None
     fmt, h, _ = best
     magic = MAGIC[fmt]
-    starts = [i for i, t in enumerate(pkts) if t.data[h:h + len(magic)] == magic]
+    starts = [i for i, t in enumerate(pkts) if t.data[h:h + len(magic)] == magic and (
+        fmt != "webp" or (h + 12 <= len(t.data) and t.data[h + 8:h + 12] == b"WEBP"))]
     frames, sizes, dims = [], [], Counter()
     for si, s in enumerate(starts):
         stop = starts[si + 1] if si + 1 < len(starts) else len(pkts)

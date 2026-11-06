@@ -1,6 +1,10 @@
 # Changelog
 
 ## Unreleased
+- image streams: WebP frames (`RIFF....WEBP` magic, RIFF chunk size for frame length, width/height from
+  VP8X canvas or VP8L/VP8 bitstream) are found the same way as JPEG/PNG/GIF/BMP;
+  `send_image()` accepts WebP file bytes. Synth: `make_capture(..., image_stream=True, webp=True)`;
+  `usb-rea demo --device lcd --webp`.
 - image streams: Windows BMP frames (`BM` magic, `bfSize` frame length, width/height from
   BITMAPINFOHEADER including top-down negative height) are found the same way as JPEG/PNG/GIF;
   `send_image()` accepts BMP file bytes. Synth: `make_capture(..., image_stream=True, bmp=True)`;
