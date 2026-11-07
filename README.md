@@ -404,7 +404,7 @@ usb-rea hid capture.pcapng --decode "10ff0d1d000000" --type Output
 - [x] packed bitfields
 - [x] validation against documented protocols (liquidctl, rivalcfg)
 - [x] HID report descriptor decoding (`usb-rea hid`), with captured commands mapped to their HID reports
-- [ ] emulated-device CI (dummy_hcd + configfs HID; script in `scripts/gadget_e2e.sh`)
+- [ ] emulated-device CI (dummy_hcd + configfs HID; `scripts/gadget_e2e.sh`, experimental `gadget-e2e` workflow)
 - [x] real-hardware case studies (ASUS TUF LC III LCD, Corsair Hydro Platinum)
 - [x] multi-packet transactions (write + apply), including checksums over earlier packets
 - [x] background traffic: periodic status polls / keep-alives are detected and ignored

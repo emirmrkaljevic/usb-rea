@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Emulated-device end-to-end test (EXPERIMENTAL, not run in CI yet).
+# Emulated-device end-to-end test (EXPERIMENTAL, runs in the gadget-e2e workflow).
 #
 # Needs a normal Linux kernel with dummy_hcd, libcomposite (usb_f_hid) and usbmon, plus root.
 # Creates a virtual HID "lamp" on dummy_hcd via configfs, captures real kernel USB traffic with
