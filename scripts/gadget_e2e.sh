@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Emulated-device end-to-end test (EXPERIMENTAL, runs in the gadget-e2e workflow).
+# Emulated-device end-to-end test. Runs locally, see docs/VALIDATION.md.
 #
 # Needs a normal Linux kernel with dummy_hcd, libcomposite (usb_f_hid) and usbmon, plus root.
 # Creates a virtual HID "lamp" on dummy_hcd via configfs, captures real kernel USB traffic with
@@ -8,7 +8,9 @@
 set -euo pipefail
 [[ $EUID -eq 0 ]] || { echo "run as root"; exit 1; }
 command -v dumpcap >/dev/null || { echo "need dumpcap (apt install tshark)"; exit 1; }
-modprobe dummy_hcd libcomposite usbmon
+modprobe -a dummy_hcd libcomposite usb_f_hid usbmon
+modprobe -a usbhid hid_generic 2>/dev/null || true
+mountpoint -q /sys/kernel/config || mount -t configfs none /sys/kernel/config
 
 G=/sys/kernel/config/usb_gadget/usbrea_lamp
 cleanup() {

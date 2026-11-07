@@ -17,8 +17,26 @@ usb-rea is validated without anyone's hardware in four ways. All of them run in 
 The driver generated from each capture is also executed against a mocked pyusb device and must emit
 byte-identical packets for values that were **never captured**.
 
+## Emulated USB gadget (local only)
+`scripts/gadget_e2e.sh` turns the machine into its own USB device: it creates a vendor-defined HID "lamp" on
+`dummy_hcd` through configfs, captures the real kernel traffic with usbmon while writing lamp commands to the
+hidraw node, runs usb-rea on the capture and checks that the inferred brightness and hue commands encode exactly
+like the reference encoder, including values that were never written.
+
+It needs a kernel with `CONFIG_USB_DUMMY_HCD`, `CONFIG_USB_LIBCOMPOSITE`, `CONFIG_USB_CONFIGFS_F_HID` and
+`CONFIG_USB_MON`, plus root. That is why it is not in CI: the GitHub hosted runner kernel has no `dummy_hcd`, and
+Ubuntu's generic kernel is built without it too (`# CONFIG_USB_DUMMY_HCD is not set`), so booting it in a VM does
+not help. Arch, Fedora or a self-built kernel usually work. To run it:
+
+```sh
+zgrep DUMMY_HCD /proc/config.gz 2>/dev/null || grep DUMMY_HCD /boot/config-$(uname -r)   # want =m or =y
+sudo apt install tshark            # or your distro's wireshark-cli, for dumpcap
+pip install -e .
+sudo env "PATH=$PATH" bash scripts/gadget_e2e.sh
+```
+
+It prints `gadget e2e OK` and the temp directory with the capture and report, and removes the gadget on exit.
+
 ## Not yet covered
-* Emulated USB gadget (dummy_hcd + raw-gadget). It needs a kernel with `CONFIG_USB_DUMMY_HCD` and
-  `CONFIG_USB_RAW_GADGET`; the development box runs a sandboxed kernel without them. Script planned in
-  `scripts/gadget_e2e.sh` for anyone with a normal Linux machine.
+* Emulated USB gadget in CI (see above, needs a runner kernel with `dummy_hcd`).
 * Real hardware. Captures + action labels from users are very welcome (open an issue).
