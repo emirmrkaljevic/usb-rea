@@ -76,6 +76,12 @@ def main(argv=None) -> int:
     r.add_argument("--setup", help="8-byte setup packet hex for control transfers")
     r.add_argument("--yes", action="store_true")
 
+    lk = sub.add_parser("lookup", help="before capturing: is this VID:PID already documented by an open-source project?")
+    lk.add_argument("device", help="VID:PID (e.g. 1e71:170e) or a capture file (uses the IDs in its descriptors)")
+    lk.add_argument("--online", action="store_true", help="also ask OpenDeviceDB (opendevicedb.org); offline by default")
+    lk.add_argument("--usb-ids", help="usb.ids file for vendor/product names (default: the system's, if installed)")
+    lk.add_argument("--json", action="store_true", help="print JSON instead of text")
+
     sub.add_parser("mcp", help="run the MCP server (stdio)")
 
     a = p.parse_args(argv)
@@ -108,6 +114,8 @@ def main(argv=None) -> int:
         return 0
     if a.cmd == "hid":
         return _hid(a)
+    if a.cmd == "lookup":
+        return _lookup(a)
     if a.cmd == "demo":
         if a.raw and a.device != "lcd":
             p.error("--raw needs --device lcd")
@@ -202,6 +210,26 @@ def _hid(a) -> int:
             print(f"\n{a.type} {a.decode}:")
             for label, v in hid.decode(desc, a.type, bytes.fromhex(a.decode)):
                 print(f"  {label} = {v}")
+    return 0
+
+
+def _lookup(a) -> int:
+    from . import lookup
+    if Path(a.device).is_file():
+        ids = [(v, p) for _, v, p in lookup.from_capture(a.device)]
+        if not ids:
+            print("no device descriptor (GET_DESCRIPTOR) in this capture; replug the device while capturing, "
+                  "or pass the VID:PID from lsusb", file=sys.stderr)
+            return 1
+    else:
+        try:
+            ids = [lookup.parse_id(a.device)]
+        except ValueError as e:
+            print(e, file=sys.stderr)
+            return 2
+    infos = [lookup.lookup(v, p, online=a.online, usb_ids=a.usb_ids) for v, p in ids]
+    print(json.dumps(infos if len(infos) > 1 else infos[0], indent=1) if a.json
+          else "\n\n".join(lookup.render(i) for i in infos))
     return 0
 
 

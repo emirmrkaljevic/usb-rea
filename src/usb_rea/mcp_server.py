@@ -212,6 +212,32 @@ def build():
         return json.dumps(out or {"error": "no HID report descriptor in capture"})
 
     @app.tool()
+    def lookup_device(
+        device: Annotated[str, Field(description="USB VID:PID as hex, e.g. '1e71:170e', or a capture path (looks up every device whose descriptor it contains)")],
+        online: Annotated[bool, Field(description="Also query OpenDeviceDB's read-only public API; default false (offline table and local usb.ids only)")] = False,
+    ) -> str:
+        """Before capturing: is this device's protocol already documented by an open-source project?
+
+        Returns JSON per device: `vendor`/`product` names, `status` ('documented', 'unknown', or
+        'listed in OpenDeviceDB'), `projects` (liquidctl, rivalcfg, turing-smart-screen-python,
+        linux-thermalright-lcd-control, usb-rea's own case studies, with links and notes), `limits`
+        (e.g. a generic chip ID shared by unrelated products), `same_vendor` and with online=true
+        `opendevicedb` (matching records and their projects, or `error` when the network is down).
+        Read-only: sends only the VID:PID, never capture contents. A matching ID is a hint, not proof
+        of the same protocol; an unknown device stays 'unknown'. Use it before capture_start.
+        """
+        from pathlib import Path
+        from . import lookup
+        try:
+            ids = ([(v, p) for _, v, p in lookup.from_capture(device)] if Path(device).is_file()
+                   else [lookup.parse_id(device)])
+        except ValueError as e:
+            return json.dumps({"error": str(e)})
+        if not ids:
+            return json.dumps({"error": "no device descriptor in capture"})
+        return json.dumps([lookup.lookup(v, p, online=online) for v, p in ids])
+
+    @app.tool()
     def replay_packet(
         vid: Annotated[int, Field(description="USB vendor id (integer, e.g. 0x1234 or 4660)")],
         pid: Annotated[int, Field(description="USB product id (integer)")],

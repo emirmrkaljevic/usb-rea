@@ -71,6 +71,25 @@ level        100%  0xa5 | 0x02 | bits[0:4] = round(value * 1 + 0) | 0x00 | sum8(
 
 Linear fits must survive leave-one-out cross-checks; otherwise usb-rea falls back to an honest lookup table and says so.
 
+## Before you capture: has someone already done it?
+`usb-rea lookup` checks a VID:PID (from `lsusb`, or every device in a capture) against devices whose
+protocol an open-source project already implements: liquidctl (NZXT Kraken, Corsair Hydro Platinum/Pro XT/Elite),
+rivalcfg (SteelSeries Rival 100/105), turing-smart-screen-python, linux-thermalright-lcd-control and
+usb-rea's own case studies. Names come from the system's `usb.ids` when it is installed. It is offline
+by default; `--online` also asks [OpenDeviceDB](https://opendevicedb.org) (only the ID is sent, never the
+capture) and falls back to the offline answer without a network.
+```bash
+usb-rea lookup 1e71:170e
+```
+```
+1e71:170e  NZXT Kraken X (X42, X52, X62 or X72) (NZXT)
+  protocol: documented
+  - liquidctl: https://github.com/liquidctl/liquidctl/blob/main/liquidctl/driver/kraken2.py (fan/pump duty, lighting, status)
+  - usb-rea validation: https://github.com/emirmrkaljevic/usb-rea/blob/main/docs/VALIDATION.md (fan duty command recovered byte for byte)
+  note: A matching USB ID alone does not prove your unit speaks the same protocol; check the project's notes.
+```
+An unknown ID stays `unknown`. `--json` prints the same as JSON; the MCP tool is `lookup_device`.
+
 ## Real device workflow (Linux)
 ```bash
 sudo modprobe usbmon
@@ -351,7 +370,7 @@ re-encode (send an image of the captured size and format), and a stream needs at
 the capture.
 
 ## MCP server
-`pip install usb-rea` then add `usb-rea mcp` as a stdio server. Tools: `capture_start`, `capture_stop`, `mark_action`, `diff_actions`, `report`, `scaffold_driver`, `hid_descriptor` (decode a HID report descriptor / report payloads), `wireshark_dissector`, `replay_packet` (refuses unless the human confirmed). Analysis tools accept the same `labels` argument as the CLI for marker-free captures.
+`pip install usb-rea` then add `usb-rea mcp` as a stdio server. Tools: `capture_start`, `capture_stop`, `mark_action`, `diff_actions`, `report`, `scaffold_driver`, `hid_descriptor` (decode a HID report descriptor / report payloads), `lookup_device` (is this VID:PID already documented? offline, OpenDeviceDB optional), `wireshark_dissector`, `replay_packet` (refuses unless the human confirmed). Analysis tools accept the same `labels` argument as the CLI for marker-free captures.
 
 With [uv](https://docs.astral.sh/uv/) no install step is needed:
 ```json
@@ -424,6 +443,7 @@ usb-rea hid capture.pcapng --decode "10ff0d1d000000" --type Output
 - [x] RGB or BGR channel order (and RGB565 byte order) from frames showing the `usb-rea testcard` picture
 - [x] image streams split over several endpoints (alternating, in blocks, or a draw command on the command endpoint)
 - [x] draw commands at the start of the first pixel packet (no packet of their own)
+- [x] `usb-rea lookup VID:PID`: known open-source drivers for a device before you capture (offline, OpenDeviceDB optional)
 
 ## Legal
 Reverse engineering for interoperability is permitted (EU Directive 2009/24/EC Art. 6, US DMCA §1201(f)). usb-rea only analyzes traffic of devices you own and never redistributes vendor code.

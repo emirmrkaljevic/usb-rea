@@ -1,6 +1,13 @@
 # Changelog
 
 ## Unreleased
+- `usb-rea lookup VID:PID` (or a capture file) and the MCP tool `lookup_device`: before capturing,
+  says whether an open-source project already documents the device's protocol (liquidctl Kraken X/Z
+  and Hydro Platinum family, rivalcfg Rival 100/105, turing-smart-screen-python, linux-thermalright-lcd-control,
+  usb-rea case studies) with links, notes and limits, plus vendor/product names from the local
+  `usb.ids`. Offline by default; `--online` also queries OpenDeviceDB's read-only API (only the ID
+  is sent) and reports the error instead of failing when there is no network. Unknown IDs stay
+  unknown. Suggested in Discussion #3.
 
 ## v0.7.11 (2026-11-06)
 BMP and WebP image streams, plus ASUS TUF LC III LCD case study docs.
