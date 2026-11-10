@@ -1,6 +1,9 @@
 # Changelog
 
 ## Unreleased
+
+## v0.7.12 (2026-11-10)
+Look up a VID:PID against known open-source drivers before capturing, plus a short README TL;DR and vs Wireshark section.
 - `usb-rea lookup VID:PID` (or a capture file) and the MCP tool `lookup_device`: before capturing,
   says whether an open-source project already documents the device's protocol (liquidctl Kraken X/Z
   and Hydro Platinum family, rivalcfg Rival 100/105, turing-smart-screen-python, linux-thermalright-lcd-control,
@@ -8,6 +11,7 @@
   `usb.ids`. Offline by default; `--online` also queries OpenDeviceDB's read-only API (only the ID
   is sent) and reports the error instead of failing when there is no network. Unknown IDs stay
   unknown. Suggested in Discussion #3.
+- docs: short TL;DR and a "How is this different from Wireshark?" section near the top of the README.
 
 ## v0.7.11 (2026-11-06)
 BMP and WebP image streams, plus ASUS TUF LC III LCD case study docs.
