@@ -1,6 +1,15 @@
 # Changelog
 
 ## Unreleased
+Larger offline `usb-rea lookup` table, a known-devices page, and clearer lookup errors.
+- `usb-rea lookup`: the offline known-device table now covers the USB IDs documented by
+  liquidctl (Kraken, Hydro, Asetek, Commander, HUE 2, Aura, Lian Li Uni, Aquacomputer and
+  others), every rivalcfg SteelSeries mouse, further turing-smart-screen-python revisions
+  (rev C/D, WeAct, native USB Turing screens), linux-thermalright-lcd-control, and a
+  curated OpenRGB set (Thermaltake Riing, Cooler Master ARGB hubs, plus IDs those projects
+  share). Each entry cites the public source file. Listed in `docs/known-devices.md`.
+- `usb-rea lookup` also accepts the `ID 1e71:170e` form from `lsusb`. A bad argument now
+  says a VID:PID or a capture path was expected, instead of only showing the parse error.
 
 ## v0.7.12 (2026-11-10)
 Look up a VID:PID against known open-source drivers before capturing, plus a short README TL;DR and vs Wireshark section.

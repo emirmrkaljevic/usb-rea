@@ -78,18 +78,21 @@ Linear fits must survive leave-one-out cross-checks; otherwise usb-rea falls bac
 
 ## Before you capture: has someone already done it?
 `usb-rea lookup` checks a VID:PID (from `lsusb`, or every device in a capture) against devices whose
-protocol an open-source project already implements: liquidctl (NZXT Kraken, Corsair Hydro Platinum/Pro XT/Elite),
-rivalcfg (SteelSeries Rival 100/105), turing-smart-screen-python, linux-thermalright-lcd-control and
-usb-rea's own case studies. Names come from the system's `usb.ids` when it is installed. It is offline
-by default; `--online` also asks [OpenDeviceDB](https://opendevicedb.org) (only the ID is sent, never the
-capture) and falls back to the offline answer without a network.
+protocol an open-source project already implements: liquidctl, rivalcfg, turing-smart-screen-python,
+linux-thermalright-lcd-control, a curated OpenRGB set, and usb-rea's own case studies. The offline
+table is listed in [docs/known-devices.md](docs/known-devices.md). Names come from the system's
+`usb.ids` when it is installed. It is offline by default; `--online` also asks
+[OpenDeviceDB](https://opendevicedb.org) (only the ID is sent, never the capture) and falls back to
+the offline answer without a network.
 ```bash
 usb-rea lookup 1e71:170e
+usb-rea lookup "ID 1e71:170e"   # lsusb form
 ```
 ```
 1e71:170e  NZXT Kraken X (X42, X52, X62 or X72) (NZXT)
   protocol: documented
   - liquidctl: https://github.com/liquidctl/liquidctl/blob/main/liquidctl/driver/kraken2.py (fan/pump duty, lighting, status)
+  - OpenRGB: https://github.com/CalcProgrammer1/OpenRGB/blob/master/Controllers/NZXTKrakenController/NZXTKrakenControllerDetect.cpp (RGB lighting)
   - usb-rea validation: https://github.com/emirmrkaljevic/usb-rea/blob/main/docs/VALIDATION.md (fan duty command recovered byte for byte)
   note: A matching USB ID alone does not prove your unit speaks the same protocol; check the project's notes.
 ```
