@@ -7,6 +7,8 @@
 <p align="center"><a href="https://skintoscan.com/#packages"><img src=".github/assets/skintoscan-support.svg" width="684" alt="Support my open-source work: get a SkinToScan pack"></a><br><sub>If you find this useful, you can support me by getting a SkinToScan pack, my other project. It's a one-time purchase that directly funds my open-source work.</sub></p>
 <p align="center"><a href="https://skintoscan.com/checkout/?add-to-cart=138"><img src=".github/assets/skintoscan-pack-1.svg" width="220" alt="Buy Single Picture Check, €4.49"></a> <a href="https://skintoscan.com/checkout/?add-to-cart=139"><img src=".github/assets/skintoscan-pack-5.svg" width="220" alt="Buy 5 Picture Pack, €19.99 (popular)"></a> <a href="https://skintoscan.com/checkout/?add-to-cart=140"><img src=".github/assets/skintoscan-pack-15.svg" width="220" alt="Buy 15 Picture Pack, €54.99"></a></p>
 
+**TL;DR:** From a USB capture (pcap/pcapng via usbmon or USBPcap/Wireshark), usb-rea infers the command and protocol structure and writes a Markdown report plus a standalone pyusb driver. It is a headless CLI and an MCP server (`usb-rea mcp`). No hardware needed to try it: `pip install usb-rea && usb-rea demo --device fan`.
+
 **Concrete result:** from captures of the NZXT Kraken X (1e71:170e) fan command, usb-rea recovers `02 4d <channel> 00 <duty>` byte for byte, exactly as liquidctl's `kraken2.py` sends it, and the generated driver emits identical packets for duty values it never saw. Same for the SteelSeries Rival 100 (1038:1702) DPI, polling and RGB tables from rivalcfg. Proof runs in CI: [docs/VALIDATION.md](docs/VALIDATION.md). Full walk-through with a CRC8 and a rolling counter: [Corsair Hydro Platinum case study](docs/case-study-hydro-platinum.md). Real Windows USBPcap of an ASUS TUF Gaming LC III LCD: [case study](docs/case-study-asus-tuf-lc3.md).
 
 **Have a Windows-only device?** [Open a device request](https://github.com/emirmrkaljevic/usb-rea/discussions/1) with a capture and I will run it and publish the result.
@@ -16,6 +18,9 @@
 Got a USB device that only ships a Windows vendor app (case LCD, RGB controller, mouse, "smart" lamp)? Click around in the vendor app while **usb-rea** captures the USB traffic (usbmon on Linux, USBPcap on Windows), diffs the packets per action, infers the protocol, and writes an open-source Python/libusb driver, with every conclusion linked to the exact packets that prove it.
 
 > Status: alpha (v0.7.11, [on PyPI](https://pypi.org/project/usb-rea/)). Validated on synthetic devices, on protocols documented by liquidctl and rivalcfg, on public Wireshark captures (see [docs/VALIDATION.md](docs/VALIDATION.md)) and on a real AIO cooler LCD capture a user shared, where it found the same brightness command and image stream format the user had worked out by hand. Your captures are welcome.
+
+## How is this different from Wireshark?
+Wireshark, tshark and USBPcap capture USB traffic and dissect packets. usb-rea reads those captures (pcap or pcapng, from usbmon or USBPcap) and does the next step: it infers the command and protocol structure from labelled actions, then writes a Markdown report and a standalone pyusb driver. The same tools run as a headless CLI or as an MCP server (`usb-rea mcp`). It can also emit a Wireshark Lua dissector for the protocol it inferred, so you can keep using Wireshark on later captures.
 
 ## Try it in 10 seconds (no hardware needed)
 ```bash
