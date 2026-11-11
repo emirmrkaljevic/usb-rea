@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.7.13 (2026-11-11)
 Larger offline `usb-rea lookup` table, a known-devices page, and clearer lookup errors.
 - `usb-rea lookup`: the offline known-device table now covers the USB IDs documented by
   liquidctl (Kraken, Hydro, Asetek, Commander, HUE 2, Aura, Lian Li Uni, Aquacomputer and
