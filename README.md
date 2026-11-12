@@ -17,7 +17,7 @@
 
 Got a USB device that only ships a Windows vendor app (case LCD, RGB controller, mouse, "smart" lamp)? Click around in the vendor app while **usb-rea** captures the USB traffic (usbmon on Linux, USBPcap on Windows), diffs the packets per action, infers the protocol, and writes an open-source Python/libusb driver, with every conclusion linked to the exact packets that prove it.
 
-> Status: alpha (v0.7.13, [on PyPI](https://pypi.org/project/usb-rea/)). Validated on synthetic devices, on protocols documented by liquidctl and rivalcfg, on public Wireshark captures (see [docs/VALIDATION.md](docs/VALIDATION.md)) and on a real AIO cooler LCD capture a user shared, where it found the same brightness command and image stream format the user had worked out by hand. Your captures are welcome.
+> Status: alpha (v0.7.14, [on PyPI](https://pypi.org/project/usb-rea/)). Validated on synthetic devices, on protocols documented by liquidctl and rivalcfg, on public Wireshark captures (see [docs/VALIDATION.md](docs/VALIDATION.md)) and on a real AIO cooler LCD capture a user shared, where it found the same brightness command and image stream format the user had worked out by hand. Your captures are welcome.
 
 ## How is this different from Wireshark?
 Wireshark, tshark and USBPcap capture USB traffic and dissect packets. usb-rea reads those captures (pcap or pcapng, from usbmon or USBPcap) and does the next step: it infers the command and protocol structure from labelled actions, then writes a Markdown report and a standalone pyusb driver. The same tools run as a headless CLI or as an MCP server (`usb-rea mcp`). It can also emit a Wireshark Lua dissector for the protocol it inferred, so you can keep using Wireshark on later captures.

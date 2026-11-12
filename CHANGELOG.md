@@ -1,6 +1,7 @@
 # Changelog
 
-## Unreleased
+## v0.7.14 (2026-11-12)
+Eight more offline USB IDs for `usb-rea lookup`, now 267 in total.
 - `usb-rea lookup`: 8 more offline USB IDs, all copied from public sources: the remaining
   linux-thermalright-lcd-control displays and its LED controller (ALi HID type 3, Frozen
   Warframe and other SCSI LCDs, Winbond LED controller, each linked to the exact source file)
