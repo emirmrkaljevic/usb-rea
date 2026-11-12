@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+- `usb-rea lookup`: 8 more offline USB IDs, all copied from public sources: the remaining
+  linux-thermalright-lcd-control displays and its LED controller (ALi HID type 3, Frozen
+  Warframe and other SCSI LCDs, Winbond LED controller, each linked to the exact source file)
+  and liquidctl's two experimental MSI Coreliquid matches. A test now catches repeated VID:PIDs.
+
 ## v0.7.13 (2026-11-11)
 Larger offline `usb-rea lookup` table, a known-devices page, and clearer lookup errors.
 - `usb-rea lookup`: the offline known-device table now covers the USB IDs documented by

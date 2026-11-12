@@ -21,6 +21,7 @@ LIQUIDCTL = "https://github.com/liquidctl/liquidctl/blob/main/liquidctl/driver/"
 RIVALCFG = "https://github.com/flozz/rivalcfg/blob/master/rivalcfg/devices/"
 TURING = "https://github.com/mathoudebine/turing-smart-screen-python"
 THERMALRIGHT = "https://github.com/rejeb/linux-thermalright-lcd-control"
+THERMALRIGHT_SRC = THERMALRIGHT + "/blob/master/src/thermalright_lcd_control/"
 OPENRGB = "https://github.com/CalcProgrammer1/OpenRGB/blob/master/Controllers/"
 DOCS = "https://github.com/emirmrkaljevic/usb-rea/blob/main/docs/"
 
@@ -57,6 +58,10 @@ def _riv(module, note="DPI, polling rate, lighting"):
 
 def _tur(note=""):
     return _p("turing-smart-screen-python", TURING, note)
+
+
+def _trl(path, note=""):
+    return _p("linux-thermalright-lcd-control", THERMALRIGHT_SRC + path, note)
 
 
 def _rgb(controller, note="RGB lighting"):
@@ -213,6 +218,10 @@ _dev(0x0CF2, 0xA103, "Lian Li Uni SL V2", [_liq("lianli_uni.py")])
 _dev(0x0CF2, 0xA104, "Lian Li Uni AL V2", [_liq("lianli_uni.py")])
 _dev(0x0CF2, 0xA105, "Lian Li Uni SL V2", [_liq("lianli_uni.py")])
 _dev(0x0DB0, 0xB130, "MSI MPG Coreliquid K360", [_liq("msi.py")])
+_dev(0x0DB0, 0xCA00, "Suspected MSI MPG Coreliquid", [_liq("msi.py")],
+     limits="liquidctl only drives it with the experimental_coreliquid_cooler unsafe flag")
+_dev(0x0DB0, 0xCA02, "Suspected MSI MPG Coreliquid", [_liq("msi.py")],
+     limits="liquidctl only drives it with the experimental_coreliquid_cooler unsafe flag")
 _dev(0x0416, 0x7395, "Lian Li GA II LCD", [_liq("ga2_lcd.py")])
 _dev(0x0C70, 0xF00E, "Aquacomputer D5 Next", [_liq("aquacomputer.py")])
 _dev(0x0C70, 0xF00A, "Aquacomputer Farbwerk", [_liq("aquacomputer.py")])
@@ -343,6 +352,19 @@ _dev(0x0416, 0x5302, "Thermalright LCD (ChiZhu, 320x240, HID)", [_p("linux-therm
 _dev(0x87AD, 0x70DB, "Thermalright LCD (ChiZhu, 320/480/640 variants)", [_p("linux-thermalright-lcd-control", THERMALRIGHT)])
 _dev(0x0416, 0x5408, "Thermalright LCD (LY)", [_p("linux-thermalright-lcd-control", THERMALRIGHT)])
 _dev(0x0416, 0x5409, "Thermalright LCD (LY)", [_p("linux-thermalright-lcd-control", THERMALRIGHT)])
+# linux-thermalright-lcd-control common/supported_devices.py, display/*.py and display/probe_registry/*.yaml
+PROBES = "device_controller/display/probe_registry/"
+_dev(0x0418, 0x5304, "Thermalright LCD (ALi, 480x480, HID type 3)", [
+    _trl("device_controller/display/hid_devices.py", "HID display protocol, F5-prefix handshake")])
+_dev(0x0418, 0x5303, "ALi LCD (HID type 3)", [_trl(PROBES + "0418x5303.yaml", "found by the HID type 3 handshake probe")])
+_dev(0x0402, 0x3922, "Thermalright Frozen Warframe LCD (320x320)", [
+    _trl("device_controller/display/device_0402_3922.py", "USB mass-storage (SCSI BOT) display protocol")])
+_dev(0x0416, 0x5406, "Winbond LCD (SCSI)", [_trl(PROBES + "0416x5406.yaml", "USB mass-storage (SCSI) transport")],
+     limits="Winbond/Nuvoton generic ID used by other products as well")
+_dev(0x87CD, 0x70DB, "Thermalright LCD (SCSI)", [_trl(PROBES + "87CDx70DB.yaml", "USB mass-storage (SCSI) transport")])
+_dev(0x0416, 0x8001, "Winbond LED Controller (Thermalright LED display)", [
+    _trl("common/supported_devices.py", "LED controller; style resolved from the HID handshake")],
+     limits="Winbond/Nuvoton generic ID used by other products as well")
 
 # OpenRGB CoolerMasterControllerDetect.cpp (ARGB/RGB hubs only, not every keyboard/mouse)
 CM = "CoolerMasterController/CoolerMasterControllerDetect.cpp"

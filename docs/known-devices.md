@@ -27,7 +27,7 @@ usb-rea lookup capture.pcapng    # every device whose descriptor is in the captu
 The MCP tool is `lookup_device`.
 
 
-The table currently has **259** USB IDs.
+The table currently has **267** USB IDs.
 
 ## liquidctl
 
@@ -58,6 +58,8 @@ The table currently has **259** USB IDs.
 | `0cf2:a104` | Lian Li Uni AL V2 | [liquidctl](https://github.com/liquidctl/liquidctl/blob/main/liquidctl/driver/lianli_uni.py) |  |
 | `0cf2:a105` | Lian Li Uni SL V2 | [liquidctl](https://github.com/liquidctl/liquidctl/blob/main/liquidctl/driver/lianli_uni.py) |  |
 | `0db0:b130` | MSI MPG Coreliquid K360 | [liquidctl](https://github.com/liquidctl/liquidctl/blob/main/liquidctl/driver/msi.py) |  |
+| `0db0:ca00` | Suspected MSI MPG Coreliquid | [liquidctl](https://github.com/liquidctl/liquidctl/blob/main/liquidctl/driver/msi.py) | liquidctl only drives it with the experimental_coreliquid_cooler unsafe flag |
+| `0db0:ca02` | Suspected MSI MPG Coreliquid | [liquidctl](https://github.com/liquidctl/liquidctl/blob/main/liquidctl/driver/msi.py) | liquidctl only drives it with the experimental_coreliquid_cooler unsafe flag |
 | `1b1c:0c02` | Corsair Hydro H80i GT | [liquidctl](https://github.com/liquidctl/liquidctl/blob/main/liquidctl/driver/asetek.py) |  |
 | `1b1c:0c03` | Corsair Hydro H100i GTX | [liquidctl](https://github.com/liquidctl/liquidctl/blob/main/liquidctl/driver/asetek.py) |  |
 | `1b1c:0c04` | Corsair H110i GT | [liquidctl](https://github.com/liquidctl/liquidctl/blob/main/liquidctl/driver/coolit.py) |  |
@@ -235,10 +237,16 @@ The table currently has **259** USB IDs.
 
 | VID:PID | Device | Projects | Limits |
 | --- | --- | --- | --- |
+| `0402:3922` | Thermalright Frozen Warframe LCD (320x320) | [linux-thermalright-lcd-control](https://github.com/rejeb/linux-thermalright-lcd-control/blob/master/src/thermalright_lcd_control/device_controller/display/device_0402_3922.py) (USB mass-storage (SCSI BOT) display protocol) |  |
 | `0416:5302` | Thermalright LCD (ChiZhu, 320x240, HID) | [linux-thermalright-lcd-control](https://github.com/rejeb/linux-thermalright-lcd-control) | Winbond/Nuvoton generic ID used by other products as well |
+| `0416:5406` | Winbond LCD (SCSI) | [linux-thermalright-lcd-control](https://github.com/rejeb/linux-thermalright-lcd-control/blob/master/src/thermalright_lcd_control/device_controller/display/probe_registry/0416x5406.yaml) (USB mass-storage (SCSI) transport) | Winbond/Nuvoton generic ID used by other products as well |
 | `0416:5408` | Thermalright LCD (LY) | [linux-thermalright-lcd-control](https://github.com/rejeb/linux-thermalright-lcd-control) |  |
 | `0416:5409` | Thermalright LCD (LY) | [linux-thermalright-lcd-control](https://github.com/rejeb/linux-thermalright-lcd-control) |  |
+| `0416:8001` | Winbond LED Controller (Thermalright LED display) | [linux-thermalright-lcd-control](https://github.com/rejeb/linux-thermalright-lcd-control/blob/master/src/thermalright_lcd_control/common/supported_devices.py) (LED controller; style resolved from the HID handshake) | Winbond/Nuvoton generic ID used by other products as well |
+| `0418:5303` | ALi LCD (HID type 3) | [linux-thermalright-lcd-control](https://github.com/rejeb/linux-thermalright-lcd-control/blob/master/src/thermalright_lcd_control/device_controller/display/probe_registry/0418x5303.yaml) (found by the HID type 3 handshake probe) |  |
+| `0418:5304` | Thermalright LCD (ALi, 480x480, HID type 3) | [linux-thermalright-lcd-control](https://github.com/rejeb/linux-thermalright-lcd-control/blob/master/src/thermalright_lcd_control/device_controller/display/hid_devices.py) (HID display protocol, F5-prefix handshake) |  |
 | `87ad:70db` | Thermalright LCD (ChiZhu, 320/480/640 variants) | [linux-thermalright-lcd-control](https://github.com/rejeb/linux-thermalright-lcd-control) |  |
+| `87cd:70db` | Thermalright LCD (SCSI) | [linux-thermalright-lcd-control](https://github.com/rejeb/linux-thermalright-lcd-control/blob/master/src/thermalright_lcd_control/device_controller/display/probe_registry/87CDx70DB.yaml) (USB mass-storage (SCSI) transport) |  |
 
 ## OpenRGB (curated)
 

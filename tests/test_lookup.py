@@ -1,6 +1,7 @@
 """VID:PID lookup before capturing. Never touches the network: OpenDeviceDB answers are faked."""
 import asyncio
 import json
+import re
 
 import pytest
 
@@ -170,3 +171,21 @@ def test_cli_lookup_lsusb_and_bad_id(capsys):
     assert main(["lookup", "not-an-id"]) == 2
     err = capsys.readouterr().err
     assert "VID:PID" in err and "capture" in err
+
+
+def test_more_known_devices_and_no_duplicate_ids():
+    """Thermalright LCD/LED IDs and liquidctl's experimental MSI Coreliquid matches."""
+    from pathlib import Path
+    assert len(lookup.KNOWN) >= 267
+    a = lookup.lookup(0x0402, 0x3922)  # Frozen Warframe, SCSI LCD
+    assert a["status"] == "documented" and "Frozen Warframe" in a["product"]
+    assert a["projects"][0]["project"] == "linux-thermalright-lcd-control"
+    assert a["projects"][0]["url"].endswith("device_0402_3922.py")
+    led = lookup.lookup(0x0416, 0x8001)
+    assert "generic" in (led.get("limits") or "")
+    msi = lookup.lookup(0x0DB0, 0xCA00)
+    assert msi["projects"][0]["url"].endswith("msi.py") and "unsafe" in msi["limits"]
+    # every _dev() call adds a new key; a repeated VID:PID would silently overwrite an entry
+    src = (Path(__file__).resolve().parents[1] / "src" / "usb_rea" / "lookup.py").read_text()
+    calls = re.findall(r"^_dev\((0x[0-9A-Fa-f]{4}), (0x[0-9A-Fa-f]{4}),", src, re.M)
+    assert len(calls) == len(set(calls)) == len(lookup.KNOWN)
