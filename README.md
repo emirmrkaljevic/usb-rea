@@ -62,6 +62,7 @@ Have a Windows-only device? [Open a device request](https://github.com/emirmrkal
 ## Docs
 
 - [Usage: capture, markers, inference and the generated driver](docs/usage.md)
+- [Capturing on Windows with USBPcap](docs/capture-windows.md)
 - [MCP server](docs/mcp.md)
 - [How is this different from Wireshark?](docs/faq.md)
 - [Known devices](docs/known-devices.md)

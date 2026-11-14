@@ -12,7 +12,7 @@ Yes. `pip install usb-rea && usb-rea demo --device fan` writes a synthetic captu
 
 ## I only have a Windows vendor app
 
-Capture with USBPcap or Wireshark, click each action with a short pause in between, then pass the actions in order with `--labels`. Markers with timestamps are better when you have them, and are required for handshake detection. If you cannot run usb-rea yourself, [open a device request](https://github.com/emirmrkaljevic/usb-rea/discussions/1) with a capture and I will run it and publish the result.
+Capture with USBPcap or Wireshark ([step by step](capture-windows.md)), click each action with a short pause in between, then pass the actions in order with `--labels`. Markers with timestamps are better when you have them, and are required for handshake detection. If you cannot run usb-rea yourself, [open a device request](https://github.com/emirmrkaljevic/usb-rea/discussions/1) with a capture and I will run it and publish the result.
 
 ## Has someone already reverse engineered this device?
 
