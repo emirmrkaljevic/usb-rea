@@ -26,3 +26,14 @@ Synthetic devices, protocols documented by liquidctl and rivalcfg, public Wiresh
 
 Reverse engineering for interoperability is permitted (EU Directive 2009/24/EC Art. 6, US DMCA §1201(f)). usb-rea only analyzes traffic of devices you own and never redistributes vendor code.
 
+## Does this work on Arch Linux?
+
+Yes. Arch marks the system Python as externally managed, so install with pipx rather than `pip` on the system interpreter:
+
+```sh
+sudo pacman -S python-pipx wireshark-cli
+pipx install usb-rea
+sudo modprobe usbmon
+```
+
+`wireshark-cli` provides `dumpcap` and `tshark`, which `usb-rea capture` needs. pyusb comes in with the pipx package. If you run a generated driver with system Python, also install `python-pyusb`. Analysing an existing capture does not need usbmon or libusb.

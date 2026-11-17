@@ -46,6 +46,9 @@ usb-rea lookup "ID 1e71:170e"   # lsusb form
 An unknown ID stays `unknown`. `--json` prints the same as JSON; the MCP tool is `lookup_device`.
 
 ## Real device workflow (Linux)
+
+On Arch Linux, install with `pipx install usb-rea` and `pacman -S wireshark-cli` so `dumpcap` is on your PATH. Details are in the [FAQ](faq.md).
+
 ```bash
 sudo modprobe usbmon
 usb-rea capture start -o lamp.pcapng

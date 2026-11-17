@@ -19,6 +19,8 @@ From captures of the NZXT Kraken X (1e71:170e) fan command, it recovers `02 4d <
 pip install usb-rea
 ```
 
+On Arch Linux, use `pipx install usb-rea` instead; the [FAQ](docs/faq.md) has the packages for capture.
+
 ## Example
 
 ```sh
@@ -66,6 +68,7 @@ Have a Windows-only device? [Open a device request](https://github.com/emirmrkal
 - [Capturing from a Windows VM on Linux](docs/capture-vm.md)
 - [MCP server](docs/mcp.md)
 - [How is this different from Wireshark?](docs/faq.md)
+- [Does this work on Arch Linux?](docs/faq.md)
 - [Known devices](docs/known-devices.md)
 - [Validation](docs/VALIDATION.md)
 - Case studies: [Corsair Hydro Platinum](docs/case-study-hydro-platinum.md), [ASUS TUF LC III LCD](docs/case-study-asus-tuf-lc3.md)

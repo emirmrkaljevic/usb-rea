@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+- docs: Arch Linux install in the FAQ (`pipx install usb-rea`, `wireshark-cli` for capture). The
+  capture error now also mentions the Arch package, not only `apt install tshark`.
+
 ## v0.7.14 (2026-11-12)
 Eight more offline USB IDs for `usb-rea lookup`, now 267 in total.
 - `usb-rea lookup`: 8 more offline USB IDs, all copied from public sources: the remaining

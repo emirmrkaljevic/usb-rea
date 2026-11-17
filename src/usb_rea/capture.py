@@ -16,7 +16,7 @@ def capture_command(out: str, bus: int = 0) -> list[str]:
         return [exe, "-d", rf"\\.\USBPcap{bus or 1}", "-o", out, "-A"]
     tool = shutil.which("dumpcap") or shutil.which("tshark")
     if not tool:
-        raise RuntimeError("need dumpcap or tshark (apt install tshark) and `sudo modprobe usbmon`")
+        raise RuntimeError("need dumpcap or tshark (Debian: apt install tshark; Arch: pacman -S wireshark-cli) and `sudo modprobe usbmon`")
     return [tool, "-i", f"usbmon{bus}", "-w", out, "-q"]
 
 
