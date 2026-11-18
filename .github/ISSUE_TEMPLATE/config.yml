@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Device request or capture to share
+    url: https://github.com/emirmrkaljevic/usb-rea/discussions/1
+    about: Post your device and capture here. Check docs/known-devices.md first, it may already have a Linux project.

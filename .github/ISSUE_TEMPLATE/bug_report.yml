@@ -1,0 +1,42 @@
+name: Bug report
+description: usb-rea crashed, misread a capture, or wrote a wrong report or driver
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Before attaching a capture, read the privacy note in docs/capture-windows.md: string descriptors can include a serial number, and other devices on the same hub end up in the file.
+  - type: input
+    id: version
+    attributes:
+      label: usb-rea version
+      description: Output of `usb-rea --version`
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Device and USB ID
+      description: For example "NZXT Kraken X, 1e71:170e". Write "synthetic demo" if you used `usb-rea demo`.
+  - type: dropdown
+    id: source
+    attributes:
+      label: Capture source
+      options:
+        - usbmon on Linux
+        - USBPcap on Windows
+        - usbmon on a Linux host with a Windows VM
+        - Other or not sure
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: The command you ran, what you expected, and what you got instead. Paste the traceback if there is one.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: labels
+    attributes:
+      label: Action labels
+      description: The actions you labelled (for example "fan 30%", "fan 60%") and roughly when you clicked them.
