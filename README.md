@@ -71,7 +71,7 @@ Have a Windows-only device? [Open a device request](https://github.com/emirmrkal
 - [Does this work on Arch Linux?](docs/faq.md)
 - [Known devices](docs/known-devices.md)
 - [Validation](docs/VALIDATION.md)
-- Case studies: [Corsair Hydro Platinum](docs/case-study-hydro-platinum.md), [ASUS TUF LC III LCD](docs/case-study-asus-tuf-lc3.md)
+- [Case studies](docs/case-studies/)
 
 MCP Registry name: `io.github.emirmrkaljevic/usb-rea`
 

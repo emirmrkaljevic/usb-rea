@@ -3,6 +3,9 @@
 ## Unreleased
 - docs: Arch Linux install in the FAQ (`pipx install usb-rea`, `wireshark-cli` for capture). The
   capture error now also mentions the Arch package, not only `apt install tshark`.
+- docs: the four case studies now live under `docs/case-studies/` (the two existing walk-throughs,
+  plus the real LC III capture that found two parser bugs, and the Jungle Leopard 9.16" panel).
+  `usb-rea lookup 33c3:7788` points at that write-up.
 
 ## v0.7.14 (2026-11-12)
 Eight more offline USB IDs for `usb-rea lookup`, now 267 in total.
@@ -44,7 +47,7 @@ BMP and WebP image streams, plus ASUS TUF LC III LCD case study docs.
   `send_image()` accepts BMP file bytes. Synth: `make_capture(..., image_stream=True, bmp=True)`;
   `usb-rea demo --device lcd --bmp`.
 - docs: ASUS TUF Gaming LC III LCD case study from the trimmed real USBPcap fixture
-  (`docs/case-study-asus-tuf-lc3.md`), linked from VALIDATION and README.
+  (`docs/case-studies/asus-tuf-lc3.md`), linked from VALIDATION and README.
 
 ## v0.7.10 (2026-11-04)
 Raw screen streams whose draw command starts the first pixel packet.

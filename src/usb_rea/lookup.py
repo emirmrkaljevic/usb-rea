@@ -101,7 +101,7 @@ _dev(0x1E71, 0x3014, "NZXT Kraken 2024 Plus", [_liq("kraken3.py")])
 # liquidctl hydro_platinum.py: https://github.com/liquidctl/liquidctl/blob/main/liquidctl/driver/hydro_platinum.py
 HP = [_liq("hydro_platinum.py"), _rgb("CorsairHydroPlatinumController/CorsairHydroPlatinumControllerDetect.cpp")]
 _dev(0x1B1C, 0x0C18, "Corsair Hydro H100i Platinum", HP + [
-    _p("usb-rea case study", DOCS + "case-study-hydro-platinum.md", "CRC8 and sequence counter recovered")])
+    _p("usb-rea case study", DOCS + "case-studies/corsair-hydro-platinum.md", "CRC8 and sequence counter recovered")])
 _dev(0x1B1C, 0x0C19, "Corsair Hydro H100i Platinum SE", HP)
 _dev(0x1B1C, 0x0C17, "Corsair Hydro H115i Platinum", HP)
 _dev(0x1B1C, 0x0C29, "Corsair Hydro H60i Pro XT", HP)
@@ -145,7 +145,7 @@ _dev(0x0B05, 0x1939, "ASUS Aura LED Controller", [_liq("aura_led.py")],
 _dev(0x0B05, 0x18F3, "ASUS Aura LED Controller", [_liq("aura_led.py")],
      limits="liquidctl notes this ID is not fully supported yet")
 _dev(0x0B05, 0x1C7B, "ASUS TUF Gaming LC III LCD", [
-    _p("usb-rea case study", DOCS + "case-study-asus-tuf-lc3.md",
+    _p("usb-rea case study", DOCS + "case-studies/asus-tuf-lc3.md",
        "brightness command and JPEG stream from one real capture; not a full driver")])
 
 # liquidctl commander_pro.py / commander_core.py
@@ -428,6 +428,12 @@ _dev(0x264A, 0x2142, "Thermaltake Riing Trio (PID 0x2142)", [_rgb(TT)])
 _dev(0x264A, 0x2143, "Thermaltake Riing Trio (PID 0x2143)", [_rgb(TT)])
 _dev(0x264A, 0x2144, "Thermaltake Riing Trio (PID 0x2144)", [_rgb(TT)])
 _dev(0x264A, 0x2145, "Thermaltake Riing Trio (PID 0x2145)", [_rgb(TT)])
+
+# usb-rea case studies only
+_dev(0x33C3, 0x7788, "Jungle Leopard HD 9.16\" panel", [
+    _p("usb-rea case study", DOCS + "case-studies/jungle-leopard-9.16.md",
+       "CDC serial protocol; info reply has no status field; not a full driver")],
+     limits="the same ID is used by the JL Chill Arc 360 (480x960); this entry is the 9.16\" unit, which reports 1920x462 in its info reply")
 
 NOTE = "A matching USB ID alone does not prove your unit speaks the same protocol; check the project's notes."
 

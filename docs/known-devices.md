@@ -27,7 +27,7 @@ usb-rea lookup capture.pcapng    # every device whose descriptor is in the captu
 The MCP tool is `lookup_device`.
 
 
-The table currently has **267** USB IDs.
+The table currently has **268** USB IDs.
 
 ## liquidctl
 
@@ -73,7 +73,7 @@ The table currently has **267** USB IDs.
 | `1b1c:0c13` | Corsair Hydro H115i Pro | [liquidctl](https://github.com/liquidctl/liquidctl/blob/main/liquidctl/driver/asetek_pro.py) |  |
 | `1b1c:0c15` | Corsair Hydro H100i Pro | [liquidctl](https://github.com/liquidctl/liquidctl/blob/main/liquidctl/driver/asetek_pro.py) |  |
 | `1b1c:0c17` | Corsair Hydro H115i Platinum | [liquidctl](https://github.com/liquidctl/liquidctl/blob/main/liquidctl/driver/hydro_platinum.py), [OpenRGB](https://github.com/CalcProgrammer1/OpenRGB/blob/master/Controllers/CorsairHydroPlatinumController/CorsairHydroPlatinumControllerDetect.cpp) (RGB lighting) |  |
-| `1b1c:0c18` | Corsair Hydro H100i Platinum | [liquidctl](https://github.com/liquidctl/liquidctl/blob/main/liquidctl/driver/hydro_platinum.py), [OpenRGB](https://github.com/CalcProgrammer1/OpenRGB/blob/master/Controllers/CorsairHydroPlatinumController/CorsairHydroPlatinumControllerDetect.cpp) (RGB lighting), [usb-rea case study](https://github.com/emirmrkaljevic/usb-rea/blob/main/docs/case-study-hydro-platinum.md) (CRC8 and sequence counter recovered) |  |
+| `1b1c:0c18` | Corsair Hydro H100i Platinum | [liquidctl](https://github.com/liquidctl/liquidctl/blob/main/liquidctl/driver/hydro_platinum.py), [OpenRGB](https://github.com/CalcProgrammer1/OpenRGB/blob/master/Controllers/CorsairHydroPlatinumController/CorsairHydroPlatinumControllerDetect.cpp) (RGB lighting), [usb-rea case study](https://github.com/emirmrkaljevic/usb-rea/blob/main/docs/case-studies/corsair-hydro-platinum.md) (CRC8 and sequence counter recovered) |  |
 | `1b1c:0c19` | Corsair Hydro H100i Platinum SE | [liquidctl](https://github.com/liquidctl/liquidctl/blob/main/liquidctl/driver/hydro_platinum.py), [OpenRGB](https://github.com/CalcProgrammer1/OpenRGB/blob/master/Controllers/CorsairHydroPlatinumController/CorsairHydroPlatinumControllerDetect.cpp) (RGB lighting) |  |
 | `1b1c:0c1a` | Corsair Lighting Node Core | [liquidctl](https://github.com/liquidctl/liquidctl/blob/main/liquidctl/driver/commander_pro.py), [OpenRGB](https://github.com/CalcProgrammer1/OpenRGB/blob/master/Controllers/CorsairLightingNodeController/CorsairLightingNodeControllerDetect.cpp) (RGB lighting) |  |
 | `1b1c:0c1c` | Corsair Commander Core | [liquidctl](https://github.com/liquidctl/liquidctl/blob/main/liquidctl/driver/commander_core.py) | liquidctl marks this match as broken |
@@ -326,4 +326,5 @@ Only IDs that are not already covered by liquidctl (plus a curated set of Therma
 
 | VID:PID | Device | Projects | Limits |
 | --- | --- | --- | --- |
-| `0b05:1c7b` | ASUS TUF Gaming LC III LCD | [usb-rea case study](https://github.com/emirmrkaljevic/usb-rea/blob/main/docs/case-study-asus-tuf-lc3.md) (brightness command and JPEG stream from one real capture; not a full driver) |  |
+| `0b05:1c7b` | ASUS TUF Gaming LC III LCD | [usb-rea case study](https://github.com/emirmrkaljevic/usb-rea/blob/main/docs/case-studies/asus-tuf-lc3.md) (brightness command and JPEG stream from one real capture; not a full driver) |  |
+| `33c3:7788` | Jungle Leopard HD 9.16" panel | [usb-rea case study](https://github.com/emirmrkaljevic/usb-rea/blob/main/docs/case-studies/jungle-leopard-9.16.md) (CDC serial protocol; info reply has no status field; not a full driver) | same ID as the JL Chill Arc 360 (480x960); this unit reports 1920x462 |

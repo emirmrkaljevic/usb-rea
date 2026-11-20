@@ -20,7 +20,7 @@ Capture with USBPcap or Wireshark ([step by step](capture-windows.md), or [from 
 
 ## What has been validated?
 
-Synthetic devices, protocols documented by liquidctl and rivalcfg, public Wireshark captures, and a real AIO cooler LCD capture a user shared, where it found the same brightness command and image stream format the user had worked out by hand. Proof runs in CI: [validation](VALIDATION.md). Walk-throughs with a CRC8 and a rolling counter, and with a real Windows USBPcap of an ASUS TUF Gaming LC III LCD, are in the [Hydro Platinum](case-study-hydro-platinum.md) and [TUF LC III](case-study-asus-tuf-lc3.md) case studies.
+Synthetic devices, protocols documented by liquidctl and rivalcfg, public Wireshark captures, and a real AIO cooler LCD capture a user shared, where it found the same brightness command and image stream format the user had worked out by hand. Proof runs in CI: [validation](VALIDATION.md). Walk-throughs are in the [case studies](case-studies/): a CRC8 and a rolling counter on the Hydro Platinum, a real Windows USBPcap of an ASUS TUF Gaming LC III LCD, the two parser bugs that capture found, and a Jungle Leopard 9.16" panel whose info reply broke a Linux driver.
 
 ## Is this legal?
 

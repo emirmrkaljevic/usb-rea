@@ -4,7 +4,7 @@ Reference: https://github.com/liquidctl/liquidctl/blob/main/liquidctl/driver/hyd
 _send_command(): [0x3f, seq << 3 | feature, command, data..., crc8(buf[1:-1])], 64 bytes,
 crc-8 = poly 0x07, sequence 1..31. _generate_cooling_payload(): fan1 mode at data[8],
 fan1 duty at data[13] (percent of 255), pump mode at data[20].
-See docs/case-study-hydro-platinum.md.
+See docs/case-studies/corsair-hydro-platinum.md.
 """
 from usb_rea.pipeline import analyze
 from usb_rea.synth import capture_from_messages

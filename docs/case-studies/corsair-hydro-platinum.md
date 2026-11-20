@@ -6,7 +6,7 @@ built exactly the way that driver frames them, and written to a pcap with `usb_r
 then run on that pcap without being told anything about the protocol. The goal is to show what
 usb-rea finds on a protocol with a rolling sequence number and a CRC, and to compare it field by
 field with a driver the community already trusts. The whole run is a test in CI:
-[`tests/test_case_hydro_platinum.py`](../tests/test_case_hydro_platinum.py).
+[`tests/test_case_hydro_platinum.py`](../../tests/test_case_hydro_platinum.py).
 
 ## The "capture"
 

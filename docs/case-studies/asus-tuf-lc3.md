@@ -4,9 +4,9 @@
 under the vendor app. The owner shared it in
 [liquidctl#936](https://github.com/liquidctl/liquidctl/issues/936) and agreed to a trimmed copy being
 kept as a test. The fixture is `tests/data/asus-tuf-lc3-lcd.pcap.gz` (provenance in
-[`tests/data/SOURCES.md`](../tests/data/SOURCES.md)). JPEG image bytes are blanked; only headers and
+[`tests/data/SOURCES.md`](../../tests/data/SOURCES.md)). JPEG image bytes are blanked; only headers and
 the end marker remain. Timestamps are shifted and IRP ids are replaced. The whole run is a test in
-CI: [`tests/test_user_capture_lc3.py`](../tests/test_user_capture_lc3.py). The same device also shows
+CI: [`tests/test_user_capture_lc3.py`](../../tests/test_user_capture_lc3.py). The same device also shows
 up in [coolerdash#176](https://github.com/damachine/coolerdash/issues/176) as a support request.
 
 ## The capture
