@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>usb-rea: get a Linux driver from a USB capture</title>
+<meta name="description" content="usb-rea reads a USB capture, infers the protocol from labelled clicks in the vendor app, and writes a Markdown report and a standalone pyusb driver. Free, MIT licensed, and local.">
+<link rel="canonical" href="https://emirmrkaljevic.github.io/usb-rea/">
+<meta name="theme-color" content="#0f1412">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="usb-rea">
+<meta property="og:title" content="usb-rea: get a Linux driver from a USB capture">
+<meta property="og:description" content="Capture the vendor app, label your clicks, and get the protocol and a working pyusb driver. Free and MIT licensed.">
+<meta property="og:url" content="https://emirmrkaljevic.github.io/usb-rea/">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="usb-rea: get a Linux driver from a USB capture">
+<meta name="twitter:description" content="Capture the vendor app, label your clicks, and get the protocol and a working pyusb driver. Free and MIT licensed.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%230f1412'/%3E%3Ctext x='16' y='22' font-family='Georgia,serif' font-size='14' text-anchor='middle' fill='%2396d6b0'%3EUSB%3C/text%3E%3C/svg%3E">
+<style>
+:root{
+  --bg:#0f1412; --bg2:#171e1b; --ink:#e8eee9; --muted:#9aa89e; --line:#2a3530;
+  --accent:#96d6b0; --accent2:#c8f0d8;
+  --sans:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:18px/1.6 var(--sans)}
+a{color:var(--accent);text-decoration-thickness:1px;text-underline-offset:3px}
+a:hover{color:var(--accent2)}
+a:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+code,pre{font-family:var(--mono);font-size:.9em}
+.skip{position:absolute;left:-999px}.skip:focus{left:1rem;top:1rem;background:var(--accent);color:var(--bg);padding:.4rem .7rem;z-index:9}
+.wrap{max-width:760px;margin:0 auto;padding:0 24px}
+header{display:flex;justify-content:space-between;align-items:baseline;gap:1rem;flex-wrap:wrap;
+  border-bottom:1px solid var(--line);padding:22px 0 14px}
+header .name{font-weight:700;letter-spacing:.02em;color:var(--ink);text-decoration:none}
+header nav a{margin-left:1.1rem;text-decoration:none;font-size:15px;color:var(--muted)}
+header nav a:hover{color:var(--accent)}
+main{padding:48px 0 64px}
+.kicker{font-family:var(--mono);font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);margin:0 0 14px}
+h1{font-size:clamp(32px,6vw,52px);line-height:1.1;letter-spacing:-.02em;margin:0 0 20px;font-weight:650}
+.lede{font-size:20px;color:var(--muted);margin:0 0 28px}
+pre{background:var(--bg2);border:1px solid var(--line);padding:16px 18px;overflow-x:auto;margin:0 0 16px}
+.note{font-size:15px;color:var(--muted);margin:0 0 36px}
+h2{font-size:13px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);margin:36px 0 12px;font-weight:600}
+ul{margin:0;padding:0 0 0 1.15rem}
+li{margin:0 0 8px}
+footer{border-top:1px solid var(--line);padding:22px 0 40px;font-size:14px;color:var(--muted)}
+footer nav{margin-bottom:10px}
+footer nav a{margin-right:1.1rem;text-decoration:none}
+footer span{display:block;margin:6px 0 0}
+</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<div class="wrap">
+  <header>
+    <a class="name" href="./">usb-rea</a>
+    <nav aria-label="Primary">
+      <a href="https://github.com/emirmrkaljevic/usb-rea">GitHub</a>
+      <a href="https://pypi.org/project/usb-rea/">PyPI</a>
+      <a href="https://github.com/emirmrkaljevic/usb-rea/blob/main/docs/usage.md">Docs</a>
+    </nav>
+  </header>
+
+  <main id="content">
+    <p class="kicker">CLI and MCP server</p>
+    <h1>Get a Linux driver from a Windows-only USB gadget.</h1>
+    <p class="lede">usb-rea reads a USB capture, infers the protocol from labelled clicks in the vendor app, and writes a Markdown report plus a standalone pyusb driver. I built it for devices that only ship a Windows app: a case LCD, an RGB controller, a mouse, or a "smart" lamp.</p>
+
+    <pre><code>pip install usb-rea
+usb-rea demo --device fan</code></pre>
+    <p class="note">The demo uses a synthetic fan controller, so you can try it without any hardware. It writes a report (every claim linked to frame numbers) and a working driver. Status is alpha; details and real device write-ups are in the repository.</p>
+
+    <h2>From a real capture</h2>
+    <pre><code>sudo modprobe usbmon
+usb-rea capture start -o lamp.pcapng
+usb-rea mark -m lamp.pcapng.actions.json "brightness 0%"
+usb-rea capture stop
+usb-rea report lamp.pcapng -o report.md
+usb-rea scaffold lamp.pcapng -o lamp_driver.py</code></pre>
+    <p class="note">It accepts usbmon on Linux and USBPcap on Windows. Captured without markers? List the actions in order and usb-rea splits the traffic at the pauses.</p>
+
+    <h2>What it has recovered</h2>
+    <ul>
+      <li>NZXT Kraken X fan command, byte for byte as liquidctl sends it, including duty values it never saw.</li>
+      <li>SteelSeries Rival 100 DPI, polling and RGB tables, checked against rivalcfg.</li>
+      <li>Those checks run in CI. Case studies from real user captures are in the docs.</li>
+    </ul>
+  </main>
+
+  <footer>
+    <nav aria-label="Footer">
+      <a href="https://github.com/emirmrkaljevic/usb-rea">GitHub</a>
+      <a href="https://pypi.org/project/usb-rea/">PyPI</a>
+      <a href="https://github.com/emirmrkaljevic/usb-rea/blob/main/docs/usage.md">Docs</a>
+      <a href="https://github.com/emirmrkaljevic/usb-rea/blob/main/CHANGELOG.md">Changelog</a>
+    </nav>
+    <span>Listed on <a href="https://getprojectradar.com/notes/usb-rea">Project Radar</a>.</span>
+    <span>MIT licensed. This page has no trackers.</span>
+  </footer>
+</div>
+</body>
+</html>
